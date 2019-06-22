@@ -1,4 +1,8 @@
 # MonteCarloPolymerChains
-## Structure of polymer chains around a spherical interface: A Monte-Carlo simulation study
+**Structure of polymer chains around a spherical interface: A Monte-Carlo simulation study**
 
-Project done at Bhabha Atomic Research Centre (BARC), Mumbai, India under the supervision of Dr. C. N. Patra, Scientist (H) in the Theoretical Chemistry Section (TCS). Codes modified from originals developed by Dr. Patra.
+*Project done at Bhabha Atomic Research Centre (BARC), Mumbai, India under the supervision of Dr. C. N. Patra, Scientist (H) in the Theoretical Chemistry Section (TCS). Codes modified from originals developed by Dr. Patra.*
+
+**Abstract**
+
+A systematic study of the structure of polymer chains around spherical interfaces, using Monte Carlo simulations has been performed. A Canonical ensemble (NVT - Number of Molecules, N, Volume, V, and Temperature, T, constant) is used for this purpose. The spherical interface is modelled as a large Yukawa sphere, whereas the polymer chains are treated as freely jointed chains interacting through Yukawa potentials. Variations in singlet density profile of the polymer chains around the interface have been analysed to obtain the effect of the size of the central spherical interface, the effect of the chain size, and the effect of the attractive potentials between the interface and the chains and amongst the chains themselves, for varying bulk densities of the polymer solutions. The configurational and packing entropic effects compete to produce density profiles analogous to those for the structure of polymer chains near walls in slit like pores. The presence of attractive potentials between the interface and the chains, between the chains themselves, and both, give expected results, i.e. there is a marked increase in density near the interface when attractive potentials are between the interface and the chains, and vice versa.
