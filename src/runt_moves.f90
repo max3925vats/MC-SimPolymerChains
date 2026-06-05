@@ -40,6 +40,10 @@ module runt_moves
   ! Number of Rosenbluth trials per bead in CCB (matches legacy NSAMP=15)
   integer, parameter :: NSAMP = 15
 
+  ! Branch probability constants (match legacy literal values exactly)
+  real(dp), parameter :: PROB_BOND_PERTURB  = 0.25_dp   ! DICK: chance to perturb a bond
+  real(dp), parameter :: PROB_CHAIN_REVERSE = 0.5_dp    ! REPT/CCB: chance to reverse chain first
+
 contains
 
   ! ------------------------------------------------------------------
@@ -131,7 +135,7 @@ contains
 
       ! With probability 0.25, perturb bond direction then renormalise
       ! (legacy: IF(RANF(NSEED).GT.0.25)GOTO 211 -> i.e., perturb with prob 0.25)
-      if (rng_uniform(rng) <= 0.25_dp) then
+      if (rng_uniform(rng) <= PROB_BOND_PERTURB) then
         call rng_unit_vector(rng, vx, vy, vz)
         d1 = d1 + p%dint * vx
         d2 = d2 + p%dint * vy
@@ -262,7 +266,7 @@ contains
     ! the reversal).  On reject the reversal stays in sys; this is also
     ! faithful to legacy (CVERT is not undone on reject).
     ! ------------------------------------------------------------------
-    if (rng_uniform(rng) > 0.5_dp) then
+    if (rng_uniform(rng) > PROB_CHAIN_REVERSE) then
       call chain_reverse(sys%x, sys%y, sys%z, ibase, sys%n)
     end if
 
@@ -403,7 +407,7 @@ contains
     ! ------------------------------------------------------------------
     ! Step 1: randomly reverse chain (with prob 0.5)
     ! ------------------------------------------------------------------
-    if (rng_uniform(rng) > 0.5_dp) then
+    if (rng_uniform(rng) > PROB_CHAIN_REVERSE) then
       call chain_reverse(sys%x, sys%y, sys%z, ibase, sys%n)
     end if
 
@@ -458,20 +462,28 @@ contains
 
         ! Intra overlap check vs non-bonded partners j-2 and below
         ! and accumulate intra energy
-        if (j >= 3) then
-          do ii = 1, j - 2
-            rdis = mi_dist2(xt(k), yt(k), zt(k), xn(ii), yn(ii), zn(ii), &
-                            sys%box%L)
-            if (rdis < 1.0_dp) then
-              et(k) = 0.0_dp
-              goto 19  ! jump to wsum accumulation
-            end if
-            eni = eni + u_pair(sqrt(rdis), p%beps, p%rcut)
-          end do
-        end if
-
-        et(k) = exp(-eni)
-19      continue
+        block
+          logical :: intra_overlap
+          intra_overlap = .false.
+          if (j >= 3) then
+            do ii = 1, j - 2
+              rdis = mi_dist2(xt(k), yt(k), zt(k), xn(ii), yn(ii), zn(ii), &
+                              sys%box%L)
+              if (rdis < 1.0_dp) then
+                intra_overlap = .true.
+                exit
+              end if
+              eni = eni + u_pair(sqrt(rdis), p%beps, p%rcut)
+            end do
+          end if
+          ! On hard overlap: et(k)=0; otherwise accumulate Boltzmann weight.
+          ! wsum always incremented (preserves goto fall-through semantics).
+          if (intra_overlap) then
+            et(k) = 0.0_dp
+          else
+            et(k) = exp(-eni)
+          end if
+        end block
         wsum = wsum + et(k)
       end do  ! k = 1..NSAMP
 
@@ -499,7 +511,7 @@ contains
         end do
       end block
 
-      ! Accumulate Rosenbluth weight WN (selected normalised weight)
+      ! Accumulate normalised Rosenbluth weight: WN *= ET_selected/sum_ET (matches legacy)
       wn    = wn * et(k)
       ! Update working chain
       xn(j) = xt(k)
@@ -585,20 +597,28 @@ contains
             + u_sphere(r, p%bbeps, sys%rsp, p%rcut)
 
         ! Intra
-        if (j >= 3) then
-          do ii = 1, j - 2
-            rdis = mi_dist2(xt(k), yt(k), zt(k), xn(ii), yn(ii), zn(ii), &
-                            sys%box%L)
-            if (rdis < 1.0_dp) then
-              et(k) = 0.0_dp
-              goto 79
-            end if
-            eno = eno + u_pair(sqrt(rdis), p%beps, p%rcut)
-          end do
-        end if
-
-        et(k) = exp(-eno)
-79      continue
+        block
+          logical :: intra_overlap
+          intra_overlap = .false.
+          if (j >= 3) then
+            do ii = 1, j - 2
+              rdis = mi_dist2(xt(k), yt(k), zt(k), xn(ii), yn(ii), zn(ii), &
+                              sys%box%L)
+              if (rdis < 1.0_dp) then
+                intra_overlap = .true.
+                exit
+              end if
+              eno = eno + u_pair(sqrt(rdis), p%beps, p%rcut)
+            end do
+          end if
+          ! On hard overlap: et(k)=0; otherwise accumulate Boltzmann weight.
+          ! wsum always incremented (preserves goto fall-through semantics).
+          if (intra_overlap) then
+            et(k) = 0.0_dp
+          else
+            et(k) = exp(-eno)
+          end if
+        end block
         wsum = wsum + et(k)
 
       end do  ! k = 1..NSAMP
