@@ -36,7 +36,8 @@ contains
     ! Workspace arrays matching the legacy JACOBI signature
     real(dp) :: b(3), z(3)
     real(dp) :: sm, tresh, g, h, t, theta, c, s, tau
-    integer  :: i, j, ip, iq, nrot
+    integer  :: i, j, ip, iq
+    logical  :: converged
 
     ! --- initialise from the input (non-destructive) ---
     aw = a
@@ -52,7 +53,7 @@ contains
       z(ip)    = 0.0_dp
     end do
 
-    nrot = 0
+    converged = .false.
 
     ! --- up to 50 sweeps (convergence is guaranteed long before that) ---
     do i = 1, 50
@@ -64,7 +65,10 @@ contains
           sm = sm + abs(aw(ip,iq))
         end do
       end do
-      if (sm == 0.0_dp) exit   ! converged
+      if (sm == 0.0_dp) then
+        converged = .true.
+        exit
+      end if
 
       ! threshold: coarse for first 3 sweeps, zero thereafter
       if (i < 4) then
@@ -142,7 +146,6 @@ contains
               evec(j,iq) = h + s*(g - h*tau)
             end do
 
-            nrot = nrot + 1
           end if
 
         end do   ! iq
@@ -156,6 +159,10 @@ contains
       end do
 
     end do   ! sweep i
+
+    ! Guard: symmetric 3×3 always converges in practice, but a silent
+    ! non-converged return would be a hard-to-debug failure mode.
+    if (.not. converged) error stop "jacobi3: failed to converge"
 
     ! --- sort eigenvalues ascending; reorder eigenvector columns to match ---
     call insertion_sort3(eval, evec)
