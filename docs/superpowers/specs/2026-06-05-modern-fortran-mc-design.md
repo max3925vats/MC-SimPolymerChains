@@ -57,9 +57,13 @@ the tree as the validation reference until the modern version passes regression.
 ### 2.2 Per-program modules
 
 - **runt**: `runt_potential` (Yukawa pair + sphere, unit-correct), `runt_energy`
-  (total + incremental, **exact full inter-molecular sum with no cutoff, faithful to
-  legacy `NEWEN1`/`OLDEN1`**), `runt_moves` (Dickman / reptation / CCB with Metropolis
-  acceptance), density observable.
+  (total + incremental), `runt_moves` (Dickman / reptation / CCB with Metropolis
+  acceptance), density observable. The energy supports **two selectable modes**:
+  - **exact** (default) — full inter-molecular sum, no cutoff, faithful to legacy
+    `NEWEN1`/`OLDEN1`; O(N_beads) per move.
+  - **cutoff** (opt-in via input `rcut > 0`) — Yukawa truncated at `rcut`, summed via
+    the cell list; O(local) per move. This is a deliberate approximation, provided so
+    the user can benchmark it against the exact result.
 - **polyfj**: `polyfj_moves` (hard-core accept-on-no-overlap), `polyfj_observables`
   (total/end/mid density, Rg & Re tensors, segmental order parameter, shape semi-axes
   via `polymc_linalg`).
@@ -71,12 +75,15 @@ the tree as the validation reference until the modern version passes regression.
   xoshiro256** (period 2^256). Deterministically seedable, so runs become reproducible
   (the legacy time-seeded code was not). Seed comes from the input (with a documented
   default); a fixed seed gives bit-identical reruns of the *modern* code.
-- **Cell list accelerates hard-core overlap (polyfj's win).** Hard-core overlap queries
-  go through `polymc_cell_list`; correctness is guaranteed by a unit test asserting
-  cell-list overlap equals brute-force O(N^2) overlap on random configurations.
-  **No physics approximations beyond the original:** `runt`'s Yukawa energy is summed
-  exactly over all inter-molecular beads (no cutoff), so `runt` retains the legacy's
-  O(N_beads) per-move cost by design; the algorithmic speedup applies to `polyfj`.
+- **Cell list accelerates hard-core overlap (polyfj) and the optional cutoff energy
+  path (runt).** Hard-core overlap queries go through `polymc_cell_list`; correctness is
+  guaranteed by a unit test asserting cell-list overlap equals brute-force O(N^2)
+  overlap on random configurations.
+- **Exact by default; approximation is opt-in.** `runt`'s energy defaults to the exact
+  full sum (no approximation beyond the original), so `runt` retains the legacy
+  O(N_beads) per-move cost. A finite `rcut` enables the truncated cell-list path
+  (O(local)) purely so the user can quantify the approximation against the exact run.
+  `polyfj` (athermal) always gets the cell-list overlap speedup.
 - **I/O format compatibility.** Read the existing `runt.inp`/`runt.ic`/`polyfj.inp`/
   `polyfj.ic` and write the existing `*.out`/`*.fc` outputs byte-compatibly, so the
   Python `setup_runs`/`run_all`/plotters and all generated decks work unchanged, and
@@ -97,11 +104,14 @@ the tree as the validation reference until the modern version passes regression.
    - Jacobi eigensolver vs analytically known symmetric matrices.
 2. **Statistical regression against the legacy binaries** (the user's explicit
    requirement): run the existing committed decks through both the legacy `.f` build
-   and the modern build at matched conditions; the density profiles (and, for polyfj,
-   the structural profiles) must agree within combined Monte-Carlo error. Because the
-   RNGs differ, agreement is statistical, not bit-exact. A small comparison script
-   loads both `denrunt.out`/`polyden.out` sets and checks per-bin agreement within a
-   tolerance scaled by the sampling error.
+   and the modern build (in **exact** mode) at matched conditions; the density profiles
+   (and, for polyfj, the structural profiles) must agree within combined Monte-Carlo
+   error. Because the RNGs differ, agreement is statistical, not bit-exact. A small
+   comparison script loads both `denrunt.out`/`polyden.out` sets and checks per-bin
+   agreement within a tolerance scaled by the sampling error.
+3. **Cutoff-vs-exact comparison** (runt): run the same deck in exact and cutoff modes
+   and report the per-bin density difference, so the size of the cutoff approximation is
+   measured, not assumed.
 
 ## 5. Development methodology
 
