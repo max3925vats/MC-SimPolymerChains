@@ -5,8 +5,9 @@
 # outputs (runt.out, denrunt.out, runt.fc) into its own directory.
 #
 # Usage:
-#   ./run_all.sh                 # run every case in runs/
-#   ./run_all.sh Fig4 t_n8       # run only cases whose dir name matches a filter
+#   ./run_all.sh                          # run every case (legacy engine, default)
+#   ./run_all.sh Fig4 t_n8               # run only cases matching a filter
+#   POLYMC_ENGINE=modern ./run_all.sh    # use fpm-built modern binary instead
 #
 # Notes:
 #   * Generate the cases first:  python3 tools/setup_runs.py
@@ -20,17 +21,37 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNS_DIR="$ROOT/runs"
-BIN="$ROOT/runt_bin"
-SRC=("$ROOT/runt.f" "$ROOT/runt-moves.f")
+
+# Engine selection: default is legacy (compile + run local gfortran binary).
+# Set POLYMC_ENGINE=modern to use the fpm-built binary from the repo build/ dir.
+ENGINE="${POLYMC_ENGINE:-legacy}"
 
 if [[ ! -d "$RUNS_DIR" ]]; then
   echo "No runs/ directory. Generate cases first:  python3 tools/setup_runs.py" >&2
   exit 1
 fi
 
-echo ">> Compiling runt ..."
-gfortran -std=legacy -O2 -o "$BIN" "${SRC[@]}"
-echo ">> Built $BIN"
+if [[ "$ENGINE" == "modern" ]]; then
+  # Repo root is one level above this script's directory (runt/).
+  REPO_ROOT="$(cd "$ROOT/.." && pwd)"
+  echo ">> Engine: modern  (fpm build)"
+  echo ">> Building via fpm ..."
+  ( cd "$REPO_ROOT" && fpm build )
+  BIN="$(find "$REPO_ROOT/build" -type f -path '*/app/runt' | head -1)"
+  if [[ -z "$BIN" ]]; then
+    echo "!! Could not locate modern runt binary under $REPO_ROOT/build" >&2
+    exit 1
+  fi
+  echo ">> Modern binary: $BIN"
+else
+  # Legacy path: compile from source, unchanged behaviour.
+  BIN="$ROOT/runt_bin"
+  SRC=("$ROOT/runt.f" "$ROOT/runt-moves.f")
+  echo ">> Engine: legacy"
+  echo ">> Compiling runt ..."
+  gfortran -std=legacy -O2 -o "$BIN" "${SRC[@]}"
+  echo ">> Built $BIN"
+fi
 
 # Optional name filters from the command line.
 filters=("$@")

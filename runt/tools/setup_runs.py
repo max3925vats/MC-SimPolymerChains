@@ -134,11 +134,19 @@ def write_ic(path: str, eta: float, nchains: int, n: int,
 
 def write_inp(path: str, ncon: int, nskip: int, bsz: float, dlr: float,
               dint: float, fdick: float, frept: float, beps: float,
-              bbeps: float, rsp: float) -> None:
-    """runt.inp: one value per line, in the order runt.f READs them."""
+              bbeps: float, rsp: float,
+              rcut: float | None = None) -> None:
+    """runt.inp: one value per line, in the order runt.f READs them.
+
+    Lines 1-10 are always written (exact-energy mode).  When `rcut` is
+    provided and > 0, an 11th line containing the cutoff radius is appended,
+    enabling the cutoff-energy path in the modern runt binary.
+    """
     vals = [str(ncon), str(nskip), f"{bsz:.4f}", f"{dlr:.4f}", f"{dint:.4f}",
             f"{fdick:.6f}", f"{frept:.6f}", f"{beps:.4f}", f"{bbeps:.4f}",
             f"{rsp:.4f}"]
+    if rcut is not None and rcut > 0.0:
+        vals.append(f"{rcut:.4f}")
     with open(path, "w") as f:
         f.write("\n".join(vals) + "\n")
 
@@ -172,6 +180,11 @@ def main() -> None:
     ap.add_argument("--dlr", type=float, default=0.1, help="max chain translation")
     ap.add_argument("--dint", type=float, default=0.1, help="max internal displacement")
     ap.add_argument("--outdir", default=default_runs, help="output runs directory")
+    ap.add_argument("--rcut", type=float, default=None,
+                    help="cutoff radius for the Yukawa potential (modern binary only). "
+                         "When provided (> 0), writes an 11th line to runt.inp enabling "
+                         "cutoff-energy mode.  Omit (default) for exact-energy mode, "
+                         "which is faithful to the legacy binary.")
     args = ap.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -191,7 +204,8 @@ def main() -> None:
         write_inp(os.path.join(case_dir, "runt.inp"),
                   ncon=args.ncon, nskip=args.nskip, bsz=args.bsz, dlr=args.dlr,
                   dint=args.dint, fdick=third, frept=third,
-                  beps=-ff, bbeps=-sf, rsp=s)   # sign flip: eps -> code BEPS
+                  beps=-ff, bbeps=-sf, rsp=s,    # sign flip: eps -> code BEPS
+                  rcut=args.rcut)
 
         print(f"{name:40s} {n:>3} {nchains:>6} {al:8.3f} "
               f"{-ff:6.2f} {-sf:6.2f} {s:4.1f}")
