@@ -165,9 +165,9 @@ contains
 
   ! ------------------------------------------------------------------
   ! rcut absent: read a file with only 10 lines; rcut stays -1.0.
-  ! Confirmed by the committed runt.inp fixture (which has a trailing
-  ! blank line 11 — list-directed read of a blank line gives EOF/EOR,
-  ! not a value, so rcut should remain -1.0).
+  ! The committed runt.inp fixture has exactly 10 data lines followed by
+  ! a trailing newline — there is no 11th line.  The optional read hits
+  ! EOF immediately (ios /= 0), so rcut remains at its -1.0 default.
   ! ------------------------------------------------------------------
   subroutine test_rcut_absent(error)
     type(error_type), allocatable, intent(out) :: error

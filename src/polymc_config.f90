@@ -75,10 +75,13 @@ contains
 
     integer  :: iu, ios
     real(dp) :: rtmp
+    character(len=256) :: msg
 
     p%rcut = -1.0_dp   ! default: exact (no cutoff)
 
-    open(newunit=iu, file=trim(path), status='old', action='read')
+    open(newunit=iu, file=trim(path), status='old', action='read', &
+         iostat=ios, iomsg=msg)
+    if (ios /= 0) error stop "polymc_config: cannot open " // trim(path)
 
     read(iu, *) p%ncon
     read(iu, *) p%nskip
@@ -117,11 +120,14 @@ contains
     character(len=*), intent(in)  :: path
     type(params_t),   intent(out) :: p
 
-    integer :: iu
+    integer :: iu, ios
+    character(len=256) :: msg
 
     p%rcut = -1.0_dp
 
-    open(newunit=iu, file=trim(path), status='old', action='read')
+    open(newunit=iu, file=trim(path), status='old', action='read', &
+         iostat=ios, iomsg=msg)
+    if (ios /= 0) error stop "polymc_config: cannot open " // trim(path)
 
     read(iu, *) p%ncon
     read(iu, *) p%nskip
@@ -172,11 +178,13 @@ contains
     type(system_t),   intent(out) :: sys
     logical,          intent(in)  :: has_rsp
 
-    integer  :: iu, k, ibead_mol, ibead_chain
+    integer  :: iu, ios, k, ibead_mol, ibead_chain
     real(dp) :: dummy_real
-    character(len=256) :: dummy_str
+    character(len=256) :: dummy_str, msg
 
-    open(newunit=iu, file=trim(path), status='old', action='read')
+    open(newunit=iu, file=trim(path), status='old', action='read', &
+         iostat=ios, iomsg=msg)
+    if (ios /= 0) error stop "polymc_config: cannot open " // trim(path)
 
     ! Line 1: PFC (read value, discard)
     read(iu, *) dummy_real
@@ -266,7 +274,11 @@ contains
     do k = 1, sys%nbeads
       mol_idx = sys%mol_of(k)
 
-      ! Increment bead counter within molecule; reset when mol changes
+      ! Assumption: beads belonging to the same molecule are stored
+      ! contiguously in the arrays (i.e., all beads of molecule i appear
+      ! before any bead of molecule i+1).  The J counter below resets
+      ! whenever mol_of(k) /= mol_of(k-1); it will produce wrong J values
+      ! if this contiguity invariant is violated.
       if (k == 1) then
         bead_in_mol = 1
       else if (sys%mol_of(k) /= sys%mol_of(k-1)) then
