@@ -205,24 +205,59 @@ pass it to `compare_profiles.py` with `--naver $((4 * 200000))`.
 
 ---
 
-## 7. polyfj equivalent (pending Task 19)
+## 7. polyfj (athermal) validation
 
-Once the modern `polyfj` driver exists, the same workflow applies using
-`polyden.out` instead of `denrunt.out`.  The column layout is:
+`polyfj` is the athermal hard-chain / hard-sphere program. It has a central
+hard sphere (radius `rsp`, from `polyfj.ic`), so density starts beyond the
+contact distance `rsp + 0.5`. The comparator reads the first three columns of
+`polyden.out` (`idx  dist  total_density`), so it works on `polyden.out`
+directly (the extra end/mid columns are ignored).
 
+### 7.1 Build both
+```bash
+# legacy polyfj
+gfortran -std=legacy -O2 -o /tmp/polyfj_legacy polyfj/polyfj.f polyfj/polyfj-moves.f
+# modern polyfj (fpm)
+fpm build
+MODERN_POLYFJ=$(find build -type f -path '*/app/polyfj' | head -1)
 ```
-idx   dist   total_density   ...
+
+### 7.2 Set up two run dirs from a deck (e.g. n8, sphere 1.5, eta 0.2)
+```bash
+DECK=polyfj/runs/n8_s1.5_e0.2
+mkdir -p /tmp/val_polyfj_legacy /tmp/val_polyfj_modern
+for d in /tmp/val_polyfj_legacy /tmp/val_polyfj_modern; do
+  cp "$DECK/polyfj.ic" "$DECK/polyfj.inp" "$d/"
+  sed -i '' '1s/.*/200000000/' "$d/polyfj.inp"   # ncon (converged)
+  sed -i '' '2s/.*/1000/'      "$d/polyfj.inp"   # nskip
+done
 ```
 
-Use `--rmin` and `--rmax` appropriate for the polyfj geometry (no central
-sphere — start comparison from `dist = 0.5` sigma).
+### 7.3 Run both (legacy is wall-clock seeded; modern is fixed-seed)
+```bash
+( cd /tmp/val_polyfj_legacy && /tmp/polyfj_legacy )
+( cd /tmp/val_polyfj_modern && "$MODERN_POLYFJ" )
+```
 
-Command template (update paths after Task 19):
-
+### 7.4 Compare the density profile (naver = ncon/nskip = 200000)
 ```bash
 python3 tools/compare_profiles.py \
     /tmp/val_polyfj_legacy/polyden.out \
     /tmp/val_polyfj_modern/polyden.out \
-    --naver 200000 \
-    --tol-sigmas 3
+    --naver 200000 --tol-sigmas 3 --rmin 2.0 --rmax 7
 ```
+Expected: **PASS** — the modern athermal density reproduces legacy within
+Monte-Carlo error.
+
+### 7.5 Structural diagnostics (seg.out / g2fj.out) — note
+The modern driver writes **corrected** segmental-order and shape semi-axis
+diagnostics by default, which intentionally do NOT match the legacy
+`seg.out`/`g2fj.out` (the legacy formulas carry reduced-unit artifacts — an
+`AL^2` factor in seg, an inertia-tensor formula in shape). To emit
+legacy-faithful values for a direct comparison, run the modern driver with the
+`--legacy-obs` flag:
+```bash
+( cd /tmp/val_polyfj_modern && "$MODERN_POLYFJ" --legacy-obs )
+```
+The total density in `polyden.out` is identical either way (the flag only
+affects `seg.out` and `g2fj.out`).
