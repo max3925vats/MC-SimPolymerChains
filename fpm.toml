@@ -1,0 +1,7 @@
+name = "polymc"
+version = "0.1.0"
+[build]
+auto-executables = true
+auto-tests = true
+[dev-dependencies]
+test-drive.git = "https://github.com/fortran-lang/test-drive"
