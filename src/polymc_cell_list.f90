@@ -57,9 +57,11 @@ contains
     integer,           intent(in)    :: nbeads
     integer :: i, ix, iy, iz, cid
 
-    ! (Re-)allocate nextp for this bead count
-    if (allocated(cl%nextp)) deallocate(cl%nextp)
-    allocate(cl%nextp(nbeads))
+    ! (Re-)allocate nextp only when size changes
+    if (.not. allocated(cl%nextp) .or. size(cl%nextp) /= nbeads) then
+      if (allocated(cl%nextp)) deallocate(cl%nextp)
+      allocate(cl%nextp(nbeads))
+    end if
 
     ! Reset all cell heads to empty
     cl%head  = 0
@@ -87,7 +89,7 @@ contains
     type(cell_list_t), intent(in)    :: cl
     type(box_t),       intent(in)    :: box
     real(dp),          intent(in)    :: px, py, pz
-    integer,           intent(inout) :: idx(:)
+    integer,           intent(out)   :: idx(:)
     integer,           intent(out)   :: nidx
     integer :: qix, qiy, qiz      ! cell of query point
     integer :: dix, diy, diz      ! stencil offsets (-1, 0, +1)
