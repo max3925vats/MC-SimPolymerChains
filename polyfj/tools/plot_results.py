@@ -38,9 +38,13 @@ OBSERVABLES = {
     "density":      ("polyden.out", 2, True,  r"$\rho(r)/\rho_0$"),
     "density_ends": ("polyden.out", 3, True,  r"$\rho_{\mathrm{ends}}(r)/\rho_0$"),
     "density_mid":  ("polyden.out", 4, True,  r"$\rho_{\mathrm{mid}}(r)/\rho_0$"),
-    "rg2":          ("rgfj.out",    9, False, r"$\langle R_g^2\rangle/\sigma^2$"),
-    "re2":          ("rgfj.out",   10, False, r"$\langle R_e^2\rangle/\sigma^2$"),
+    # rgfj.out layout (modern driver): idx dist rho_com Rg2 Re2  (5 cols, 0-based)
+    "rho_com":      ("rgfj.out",    2, False, r"$\rho_{\mathrm{CoM}}(r)$"),
+    "rg2":          ("rgfj.out",    3, False, r"$\langle R_g^2\rangle/\sigma^2$"),
+    "re2":          ("rgfj.out",    4, False, r"$\langle R_e^2\rangle/\sigma^2$"),
+    # seg.out: idx dist S  (3 cols, 0-based col 2)
     "seg":          ("seg.out",     2, False, r"$S(r)$"),
+    # g2fj.out layout (modern driver): idx dist a b c  (5 cols, 0-based cols 2/3/4)
     "shape_a":      ("g2fj.out",    2, False, r"$a/\sigma$"),
     "shape_b":      ("g2fj.out",    3, False, r"$b/\sigma$"),
     "shape_c":      ("g2fj.out",    4, False, r"$c/\sigma$"),
