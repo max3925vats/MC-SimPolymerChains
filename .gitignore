@@ -1,0 +1,19 @@
+# Local tooling / OS cruft
+.claude/
+.DS_Store
+
+# Ground-truth audit reports (local only)
+Audit_*.md
+
+# Simulation run outputs (regenerate via run_all.sh) and generated figures
+*.out
+*.fc
+run.log
+figures/
+# compiled binaries
+runt/runt_bin
+polyfj/polyfj_bin
+*.o
+
+# report PDF (large binary doc, kept locally not in VCS)
+*.pdf
