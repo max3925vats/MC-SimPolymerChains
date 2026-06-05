@@ -19,6 +19,12 @@
 !   detections in subsequent moves.  The fix: copy the chain into a local
 !   working array (xn/yn/zn), apply the reversal there, and only write back to
 !   sys on acceptance.
+!   NOTE: unlike the legacy code (which commits the 50% chain reversal to global
+!   state even on a rejected move), this port applies the reversal only to a
+!   local copy and writes sys solely on acceptance — an intentional behavioral
+!   fix required by the rebuild-cl-on-accept driver contract; it preserves
+!   detailed balance because the reversal is a symmetry relabeling of a
+!   symmetric chain.
 !
 ! Public interface:
 !   subroutine move_dick(sys, p, cl, rng, imol, accepted)
@@ -450,9 +456,10 @@ contains
 
     ! ------------------------------------------------------------------
     ! Step 4: store new chain; set up OLD chain for weight calculation.
-    ! The OLD chain uses the ORIGINAL (un-reversed) chain positions.
-    ! Legacy: after DO 50 loop, copy XN→STX; reload XN from X1 (the original).
-    ! Here, xorig holds the original positions regardless of reversal.
+    ! The OLD chain uses the base (possibly-reversed) chain positions.
+    ! Legacy: after DO 50 loop, copy XN→STX; reload XN from X1 (X1 was
+    ! already modified by CVERT, i.e. post-reversal).
+    ! Here, xbase holds that same post-reversal state.
     ! ------------------------------------------------------------------
     do j = 1, sys%n
       stx(j) = xn(j)
