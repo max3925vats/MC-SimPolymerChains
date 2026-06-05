@@ -15,6 +15,9 @@ runt/runt_bin
 polyfj/polyfj_bin
 *.o
 
+# fpm / make build output
+build/
+
 # report PDF (large binary doc, kept locally not in VCS)
 *.pdf
 

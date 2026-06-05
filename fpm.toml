@@ -5,3 +5,4 @@ auto-executables = true
 auto-tests = true
 [dev-dependencies]
 test-drive.git = "https://github.com/fortran-lang/test-drive"
+test-drive.tag = "v0.6.0"
