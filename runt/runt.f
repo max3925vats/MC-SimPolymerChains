@@ -1,3 +1,70 @@
+! ============================================================
+!  FILE: runt/runt.f
+!  PROGRAM: BBEADMC  (Big-Bead Monte Carlo for polymer chains)
+!  ENSEMBLE: Canonical (NVT), Metropolis acceptance criterion
+!
+!  PURPOSE:
+!    Driver for a Monte Carlo simulation of hard-core + full
+!    Yukawa polymer chains around a fixed central sphere.
+!    Three chain-move types are used each step: Dickman (DICK),
+!    reptation (REPT), or configurational-bias (CCB).
+!    Metropolis acceptance logic lives in runt-moves.f.
+!
+!  UNIT CONVENTION:
+!    All coordinates are stored in REDUCED units, i.e. divided
+!    by the box length AL.  Minimum-image distances are obtained
+!    with DNINT.  Bead diameter sigma = 1 (lattice unit);
+!    bead-sphere contact distance = RSP + 0.5 in real units.
+!
+!  COMMON BLOCKS (all declared here in BBEADMC):
+!    /POS/     X,Y,Z        -- bead positions (reduced)
+!              XITR,YITR,ZITR -- trial chain positions (reduced)
+!    /SEED/    NSEED        -- seed for Park-Miller RNG (RANF)
+!    /RON/     DLR, DINT    -- max chain-translation and
+!                              internal-displacement step sizes
+!    /BOX/     AL           -- box length (Angstrom / sigma)
+!              BDIA         -- box body-diagonal (reduced after scaling)
+!    /INTVAR/  NMOL         -- number of chains
+!              N            -- beads per chain
+!              NVL          -- overlap flag set by energy routines
+!    /ENS/     BEPS         -- inverse temperature / chain-chain
+!                              Yukawa coefficient
+!              ENER,EOLD,ENEW -- running and trial energies
+!    /BIGBEAD/ BBEPS        -- bead-sphere Yukawa coefficient
+!              RSP          -- central sphere radius (real units)
+!              RSPL2        -- ((RSP+0.5)/AL)^2, reduced contact^2
+!    /SIGS/    DEFF         -- (1/AL)^2, hard-core threshold
+!                              (squared reduced bead diameter)
+!              CEFF         -- intra-chain soft cutoff (vestigial)
+!
+!  INPUT FILES:
+!    runt.inp  -- 10 values (one per line):
+!                  NCON   total MC moves
+!                  NSKIP  moves per accumulation block
+!                  BSZ    radial bin size (real units)
+!                  DLR    chain-translation max displacement
+!                  DINT   internal-bead max displacement
+!                  FDICK  fraction of moves that are Dickman
+!                  FREPT  fraction of moves that are reptation
+!                  BEPS   chain-chain inverse-T / Yukawa coeff
+!                  BBEPS  bead-sphere Yukawa coefficient
+!                  RSP    central sphere radius
+!    runt.ic   -- initial configuration:
+!                  PFC (packing fraction), blank, NMOL, N,
+!                  blank, blank, AL,
+!                  then NBTOT lines: ID JD X Y Z (real units)
+!
+!  OUTPUT FILES:
+!    runt.fc      -- restart configuration (real-unit coords)
+!    runt.out     -- run summary + radial density profile
+!    denrunt.out  -- density profile only:
+!                    columns: bin index, distance, density
+!
+!  RNG NOTE:
+!    RANF is a Park-Miller generator (defined externally).
+!    It replaces the legacy RAN intrinsic which returns a
+!    constant under gfortran.
+! ============================================================
 !---------------------------------------------------------!
 !     MONTE CARLO SIMULATION OF HARD CORE + FULL YUKAWA
 !     CHAINS AROUND A BIG BEAD
@@ -58,6 +125,7 @@
       READ(2,*)AL
 
       NBTOT = NMOL*N
+!     Convert bead coordinates from real units to reduced units (divide by AL)
       DO I = 1, NBTOT
          READ(2,*)ID,JD,X(I),Y(I),Z(I)
          X(I) = X(I)/AL
@@ -73,6 +141,12 @@
       NBIN = INT(BDIA02/BSZ)
       IF(NBIN.GT.MAXBIN)WRITE(*,*) 'Bin dimension'
 
+!     --- Reduced-unit scaling block ---
+!     All length-like quantities are now divided by AL so that
+!     the simulation loop works entirely in reduced coordinates.
+!     RSPL2 = ((RSP+0.5)/AL)^2 is the squared reduced contact distance.
+!     DEFF  = (1/AL)^2 is the squared reduced hard-core diameter (sigma=1).
+!     CEFF is the intra-chain soft cutoff; effectively vestigial.
       RSPL2 = ((RSP+0.5D0)/AL)**2
       AL1 = AL/AL
       AL02 = AL1/2.0D0
@@ -121,6 +195,10 @@
          IMOL = (I-1)*N
 
 !      PICK DICKMAN, REPTATION OR CCB
+!      Move selection: draw XRAN in [0,1).
+!        XRAN < FDICK              -> Dickman regrowth (DICK)
+!        FDICK <= XRAN < FDICK+FREPT -> reptation (REPT)
+!        otherwise                 -> configurational-bias (CCB)
 
          XRAN = RANF(NSEED)
          IF(XRAN.LT.FDICK)THEN
@@ -154,6 +232,8 @@
  
             AVENER = AVENER + ENERGY
 !       Density Profiles
+!       Accumulate bead counts in radial bins.
+!       Minimum-image distance from box centre: DSX = X - DNINT(X), etc.
             DO I = 1, NMOL
                DO J = 1, N
                   IJ = (I-1)*N + J
@@ -173,6 +253,7 @@
          ENDIF
 1000  CONTINUE
 
+!     Restore displacement parameters to real units for output
       DLR = DLR*AL
       DINT = DINT*AL
 
@@ -184,6 +265,7 @@
       IF(NAVER.GT.0)AVENER = AVENER/DBLE(NAVER)/DBLE(NBTOT)
       WRITE(6,*)AVENER
 
+!     Write restart configuration (runt.fc) in real-unit coordinates
       OPEN(UNIT=3,FILE='runt.fc',STATUS='UNKNOWN')
       WRITE(3,111)PFC,NMOL,N,AL
       DO I = 1, NMOL
@@ -203,6 +285,7 @@
 !
 112   FORMAT(1X,I3,2X,I3,2X,3E18.10)
 !
+!     Write summary (runt.out) and radial density profile (denrunt.out)
       OPEN(UNIT=5,FILE='runt.out',STATUS='UNKNOWN')
       OPEN(UNIT=4,FILE='denrunt.out',STATUS='UNKNOWN')
 !
@@ -219,6 +302,10 @@
      C              FSD, FSR, FSJ
       WRITE (5,118) AL,AL
       WRITE (5,*)'DENSITY PROFILES NEAR THE BIG BEAD'
+!     Density-profile normalization:
+!     ANR = NR(I) / (shell volume * NAVER)
+!     Shell volume = (4*pi/3) * (RUPPER^3 - RLOWER^3) in real units.
+!     DIST is the bin mid-point.  Written to both runt.out and denrunt.out.
       CONST = 4.0D0*PI/3.0D0
       DO I=1, NBIN
          RLOWER = DBLE(I-1)*BSZ
@@ -254,6 +341,15 @@
       STOP
       END
 !
+! -------------------------------------------------------------------
+!  SUBROUTINE RUV(X, Y, Z)
+!  PURPOSE: Return a uniformly distributed random unit vector
+!           using the Marsaglia (1972) rejection method.
+!           Two uniform variates B1, B2 are drawn in [-1,1];
+!           pairs with B1^2+B2^2 >= 1 are rejected (rejection
+!           rate ~1-pi/4 ≈ 21.5%).  The accepted pair maps onto
+!           the sphere via the exact equal-area projection.
+! -------------------------------------------------------------------
       SUBROUTINE RUV(X,Y,Z)
       IMPLICIT REAL*8(A-H,O-Z)
       REAL*4 RANF

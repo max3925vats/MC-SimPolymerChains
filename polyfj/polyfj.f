@@ -1,5 +1,60 @@
+! ===========================================================================
+! FILE: polyfj/polyfj.f
+! PROGRAM: POLYHC  -- Legacy driver for athermal hard-chain / hard-sphere MC
+! ---------------------------------------------------------------------------
+! MODEL
+!   Athermal (hard-core only): N-bead chains (bead diameter sigma = 1) near a
+!   fixed hard central sphere of radius RSP.  A trial move is accepted iff it
+!   produces no overlap; there is no energy term and no Metropolis criterion.
+!   Contact condition: bead-sphere overlap when (r - RSP) < 0.5 (i.e. surface
+!   separation < sigma/2); stored in reduced units as RSPL2=((RSP+0.5)/AL)^2.
+!
+! REDUCED UNITS
+!   All coordinates are stored as x/AL (box length AL = 1 in reduced coords).
+!   Minimum-image distances use DNINT (nearest integer rounding).
+!   Hard-core threshold: (sigma/AL)^2 = DEFF = (1/AL)^2.
+!
+! MOVE ORDER  (per MC step, drawn uniformly over chains)
+!   1. REPT  (reptation)  if XRAN < FREPT
+!   2. DICK  (Dickman)    if XRAN < FDICK + FREPT
+!   3. CCB   (configurational-bias) otherwise
+!   Note: REPT is tested first (unlike the thermal 'runt' program which
+!   tests DICK first).
+!
+! COMMON BLOCKS
+!   /POS1/   X1,Y1,Z1(NBMAX)    -- current bead positions (reduced)
+!            XITR,YITR,ZITR(NMAX)-- trial bead positions (reduced)
+!   /SEED/   NSEED               -- RNG seed for RANF
+!   /RON/    DLR, DINT           -- translation & internal displacement steps
+!   /BOX/    AL                  -- box side length (Angstrom)
+!            RSPL2               -- ((RSP+0.5)/AL)^2, sphere contact threshold
+!   /INTVAR/ NMOL1               -- number of chains
+!            N                   -- beads per chain
+!            NVL                 -- overlap flag (set by move routines)
+!   /SIGS/   DEFF=(1/AL)^2       -- hard-core squared-distance threshold
+!            CELLI               -- cells per dimension (real)
+!   /OLAP/   HEAD,MAP,IDI,LIST,MC-- linked-cell list arrays (see NOTE below)
+!
+! INPUT FILES
+!   polyfj.inp  -- 7 values: NCON, NSKIP, BSZ, DLR, DINT, FDICK, FREPT
+!   polyfj.ic   -- initial configuration: PFC, NMOL1, N, RSP, AL, coordinates
+!
+! OUTPUT FILES
+!   polyfj.fc   -- restart configuration (same format as polyfj.ic)
+!   polyfj.out  -- run summary: parameters, move statistics, density profiles,
+!                  segmental order parameter, Rg/Re profiles, shape semi-axes
+!   polyden.out -- density profile: total / chain-end / chain-middle bead
+!                  number densities vs distance from sphere centre
+!   seg.out     -- segmental orientational order parameter vs distance
+!   rgfj.out    -- Rg and Re component profiles vs chain centre-of-mass distance
+!   g2fj.out    -- chain-shape semi-axes (from moment-of-inertia eigenvalues)
+! ===========================================================================
 !     MONTE CARLO SIMULATION OF HARD CHAIN
 !     NEAR A LARGER HARD SPHERE
+!
+! PROGRAM POLYHC
+!   Main driver: reads input, runs the MC loop, accumulates statistics,
+!   writes all output files.
       PROGRAM POLYHC   
       IMPLICIT REAL*8(A-H,O-Z)
       REAL*4 RANF
@@ -47,6 +102,10 @@
 !     FRACTION OF REPTATION 
       READ(1,*)FREPT
       CLOSE(UNIT=1,STATUS='KEEP')
+!
+!     READ INITIAL CONFIGURATION: PFC, chain count, chain length,
+!     sphere radius, box length, then bead coordinates (converted to
+!     reduced units x/AL on the fly).
 
       OPEN(UNIT=2,FILE='polyfj.ic',STATUS='OLD')
       READ(2,*)PFC
@@ -71,6 +130,7 @@
 
       IF(NBIN.GT.MAXBIN)PAUSE 'Bin dimension'
 !
+!     Identify middle bead index/indices for even- or odd-length chains.
       IF(MOD(N,2).EQ.0)THEN
          NM1 = N/2
          NM2 = NM1 + 1
@@ -102,6 +162,10 @@
          CCIG(I) = 0.0D0
       ENDDO
 
+!
+!     Compute derived parameters in reduced units.
+!     DEFF   = (sigma/AL)^2 = (1/AL)^2  -- hard-core overlap threshold
+!     RSPL2  = ((RSP+0.5)/AL)^2          -- bead-sphere contact threshold
 !     PARAMETERS
       BSZR = BSZ/AL
       BSZC = BSZCM/AL
@@ -110,6 +174,17 @@
       DEFF = (1.0D0/AL)**2
       RSPL2 = ((RSP+0.5D0)/AL)**2
 
+! ---------------------------------------------------------------------------
+! NOTE: LINKED-CELL LIST -- built and maintained below but NEVER used for
+!   overlap testing.  The cell-list-based routine OVER1 (in polyfj-moves.f)
+!   is never called; all overlap checks use the O(N^2) brute-force routine
+!   OVER instead.  The list machinery below is therefore dead overhead.
+!   MC    = cells per dimension (capped at MCMAX=25)
+!   MAP   = neighbour-cell indices (27 neighbours per cell, periodic)
+!   HEAD  = first bead index in each cell (0 = empty)
+!   LIST  = next bead in the same cell (singly-linked, 0 = end)
+!   IDI   = particle-to-cell map; never populated in this driver.
+! ---------------------------------------------------------------------------
 !     LINKED LIST
       DCMAX = 1.0D0
       MC = MIN(MCMAX,INT(AL/DCMAX))
@@ -119,6 +194,8 @@
       DO I = 1, MAPSIZ
          MAP(I) = 0
       ENDDO
+!     Build MAP: for each cell store the 27 neighbouring cell indices
+!     (including itself) with periodic wrapping.
       DO ICELL = 1, NCELL
          ICX = MOD(ICELL,MC)
          IF(ICX.EQ.0)ICX=MC
@@ -256,6 +333,14 @@
 !
       IF(MOD(ICON,NSKIP).EQ.0)THEN
          NAVER = NAVER + 1
+! ---------------------------------------------------------------------------
+! DENSITY ACCUMULATION (every NSKIP steps)
+!   N1X: total bead count per radial bin
+!   NX1: chain-end bead count (J=1 or J=N)
+!   NX2: chain-middle bead count (J=NM1 or NM2)
+!   NR/SR: bond-midpoint count and cos(theta) sum for segmental order parameter
+!   Distances are from the sphere centre; minimum-image applied.
+! ---------------------------------------------------------------------------
 !      DENSITY PROFILES
          DO I = 1, NMOL1
             DO J = 1, N
@@ -288,6 +373,13 @@
          ENDDO
 !
 !      RG PROFILE
+! ---------------------------------------------------------------------------
+! Rg / Re PROFILE
+!   For each chain: compute centre of mass (XCM,YCM,ZCM) in reduced units,
+!   apply minimum image to get X1CM etc., then accumulate Rg components
+!   (mean-square displacement from CM) and Re components (end-to-end vector).
+!   XCMB = |r_CM| used to bin chains by distance from sphere.
+! ---------------------------------------------------------------------------
          DO I = 1, NMOL1
             XCM = 0.0D0
             YCM = 0.0D0
@@ -330,6 +422,14 @@
             RE2I = YE*YE
             RE3I = ZE*ZE
 !
+! ---------------------------------------------------------------------------
+! CHAIN-SHAPE SEMI-AXES via moment-of-inertia tensor
+!   Build the 3x3 inertia tensor AI about the chain CM, then diagonalize
+!   with JACOBI to get eigenvalues DI(1..3).  The three semi-axes CIGA/B/C
+!   follow from the Theodorou-Suter formula:
+!     semi-axis = sqrt(2.5*(sum of other two eigenvalues - this eigenvalue)/N)
+!   Eigenvalues are sorted so EIG1 <= EIG2 <= EIG3.
+! ---------------------------------------------------------------------------
 !       CALCULATE SEMI-AXIS LENGTHS
 !       CALCULATE MOMENT OF INERTIA TENSOR
             DO IA = 1, 3
@@ -391,10 +491,14 @@
                BCIG(K) = BCIG(K) + CIGBI*AL
                CCIG(K) = CCIG(K) + CIGCI*AL
             ENDIF
+!           Bin this chain by CM distance and accumulate Rg, Re, semi-axes.
          ENDDO
       ENDIF
 1000  CONTINUE
 
+! ---------------------------------------------------------------------------
+! OUTPUT: restart file, summary, density/segmental-order/Rg-Re/shape profiles
+! ---------------------------------------------------------------------------
 !     WRITE RESULTS
       IF(NTD.GT.0)FSD=DBLE(NSD)/DBLE(NTD)
       IF(NTJ.GT.0)FSJ=DBLE(NSJ)/DBLE(NTJ)
@@ -403,10 +507,12 @@
          X1(I) = AL*X1(I)
          Y1(I) = AL*Y1(I)
          Z1(I) = AL*Z1(I)
+!     Convert reduced coordinates back to Angstrom for the restart file.
       ENDDO
 
       DLR = DLR*AL
       DINT = DINT*AL
+!     Write restart configuration to polyfj.fc (same format as polyfj.ic).
 !
       OPEN(UNIT=2,FILE='polyfj.fc',STATUS='UNKNOWN')
       WRITE(2,111)PFC,NMOL1,N,RSP,AL
@@ -425,6 +531,7 @@
      C      2X, F10.4,5X,'RADIUS OF SOLUTE'/
      C      4X, E18.10, 2X, 'PERIODIC LENGTH '/ )
 112   FORMAT(1X,I6,2X,I6,2X,3E18.10)
+!     Write run summary and density profiles to polyfj.out and polyden.out.
 !
       OPEN(UNIT=1,FILE='polyfj.out',STATUS='UNKNOWN')
       OPEN(UNIT=4,FILE='polyden.out',STATUS='UNKNOWN')
@@ -455,6 +562,11 @@
       ENDDO
       CLOSE(UNIT=4,STATUS='KEEP')
 !
+! ---------------------------------------------------------------------------
+! SEGMENTAL ORDER PARAMETER OUTPUT
+!   SRI = <P2(cos theta)> = (3*<cos theta>-1)/2 per radial bin.
+!   Written to seg.out and polyfj.out.
+! ---------------------------------------------------------------------------
 !     SEGMENTAL ORDER PARAMETER
       WRITE(1,*)'SEGMENTAL ORDER PARAMETER'
       OPEN(UNIT=4,FILE='seg.out',STATUS='UNKNOWN')
@@ -468,6 +580,12 @@
       ENDDO
       CLOSE(UNIT=4,STATUS='KEEP')
 !
+! ---------------------------------------------------------------------------
+! Rg / Re PROFILE OUTPUT  (rgfj.out) and SHAPE SEMI-AXES OUTPUT (g2fj.out)
+!   Per CM-distance bin: chain density ANC, Rg and Re component averages,
+!   total Rg and Re, and the three shape semi-axes (ACIG,BCIG,CCIG).
+!   Note: ACIG/BCIG/CCIG were accumulated as linear values; sqrt taken here.
+! ---------------------------------------------------------------------------
       OPEN(UNIT=4,FILE='rgfj.out',STATUS='UNKNOWN')
       OPEN(UNIT=2,FILE='g2fj.out',STATUS='UNKNOWN')
       WRITE(1,*)'CENTRE OF MASS AND R2G PROFILE'
@@ -522,6 +640,14 @@
 1140  FORMAT (1X,I10,1X,F12.5,3X,9(E10.4,4X,E10.4,4X))
       STOP
       END
+! ===========================================================================
+! SUBROUTINE RUV(A,B,C)
+!   Generates a random unit vector (A,B,C) on the unit sphere using the
+!   Marsaglia (1972) rejection method:
+!     - draw (B1,B2) uniform in [-1,1]^2; reject if B1^2+B2^2 >= 1
+!     - project to sphere: A=2*B1*sqrt(1-B1^2-B2^2), B=2*B2*..., C=1-2*(B1^2+B2^2)
+!   Uses RANF (not the broken legacy RAN intrinsic).
+! ===========================================================================
 
       SUBROUTINE RUV(A,B,C)
       IMPLICIT REAL*8(A-H,O-Z)
@@ -543,6 +669,20 @@
       RETURN
       END
 !
+! ===========================================================================
+! SUBROUTINE JACOBI(A,N,NP,D,V,NROT)
+!   Cyclic Jacobi algorithm for the eigenvalues and eigenvectors of a real
+!   symmetric matrix (Numerical Recipes, Fortran 77 edition).
+!   Arguments:
+!     A(NP,NP) -- symmetric input matrix (overwritten during iteration)
+!     N        -- logical dimension of the matrix (N <= NP)
+!     NP       -- physical leading dimension of A and V in the caller
+!     D(NP)    -- OUTPUT: eigenvalues
+!     V(NP,NP) -- OUTPUT: eigenvectors (column k corresponds to D(k))
+!     NROT     -- OUTPUT: number of Jacobi rotations performed
+!   Convergence: terminates when the sum of |off-diagonal elements| = 0,
+!   or aborts with PAUSE after 50 sweep iterations (should not occur).
+! ===========================================================================
       SUBROUTINE JACOBI(A,N,NP,D,V,NROT)
       IMPLICIT REAL*8(A-H,O-Z)
       PARAMETER (NMAX=100)
