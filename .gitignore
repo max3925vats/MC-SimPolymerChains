@@ -17,3 +17,7 @@ polyfj/polyfj_bin
 
 # report PDF (large binary doc, kept locally not in VCS)
 *.pdf
+
+# Python bytecode
+__pycache__/
+*.pyc
