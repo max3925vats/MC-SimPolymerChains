@@ -69,8 +69,18 @@ program runt_driver
   ! runt's sphere radius comes from the .inp, not the .ic header
   sys%rsp = p%rsp
 
+  ! Guard: nskip must be positive — mod(icon, nskip) in the accumulation
+  ! step would divide by zero for nskip <= 0, producing wrong results or
+  ! a runtime fault on some compilers.
+  if (p%nskip <= 0) error stop "runt: nskip must be > 0"
+
   ! ==================================================================
   ! 2. Seed RNG (deterministic; seed default 12345)
+  !    Runs are reproducible by design: the same seed always produces
+  !    the same trajectory.  To vary the run, change the 'seed' value
+  !    in runt.inp (or expose it via command-line / environment).
+  !    (The legacy code seeded from the wall clock, making exact
+  !    reproduction impossible — this rewrite deliberately avoids that.)
   ! ==================================================================
   call rng_seed(rng, p%seed)
 
