@@ -21,3 +21,6 @@ polyfj/polyfj_bin
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Implementation plans (local working docs)
+docs/superpowers/plans/
