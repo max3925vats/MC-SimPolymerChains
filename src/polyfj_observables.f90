@@ -17,13 +17,24 @@
 !     - Rg^2, Re^2 are in sigma^2 (no AL^2 multiplication needed)
 !     - shape semi-axes: see note below
 !
-! Shape semi-axis convention (deviation from legacy noted):
-!   Legacy builds the INERTIA tensor I_{ab} and uses the formula
-!     CIGAI = sqrt(2.5*(EIG2+EIG3-EIG1)/N)
-!   This module instead diagonalises the GYRATION tensor G_{ab}=(1/N)*sum_j dr_a*dr_b
-!   and accumulates sqrt(eigenvalue) sorted descending (a>=b>=c).
-!   The driver (Task 18) computes a_out = mean(a_sum)/nc etc.
-!   This is noted as a deliberate simplification; see report for details.
+! Shape semi-axis accumulators — two parallel sets:
+!
+!   CORRECTED (default, a_sum / b_sum / c_sum):
+!     Diagonalises the GYRATION tensor G_{ab} = (1/N)*sum_j dr_a*dr_b
+!     and accumulates sqrt(eigenvalue) sorted descending (a>=b>=c).
+!     The driver finalises as a_out = a_sum/nc (proper mean of per-chain values).
+!
+!   LEGACY-FAITHFUL (acig_sum / bcig_sum / ccig_sum):
+!     Builds the INERTIA tensor I_{ab} (off-diagonal terms negated),
+!     diagonalises it, and applies the legacy formula (polyfj.f lines 372-374):
+!       cigai = sqrt(max(2.5*(eig2+eig3-eig1)/n, 0))   ! eig1<=eig2<=eig3
+!       cigbi = sqrt(max(2.5*(eig1+eig3-eig2)/n, 0))
+!       cigci = sqrt(max(2.5*(eig2+eig1-eig3)/n, 0))
+!     The driver finalises as acig_out = sqrt(acig_sum/nc) to match legacy's
+!     sqrt-of-mean convention (ACIG(K) = sum cigai*AL; output = sqrt(ACIG/NC)*AL).
+!     The max(...,0) guard prevents NaN on degenerate (rod-like) chains where
+!     legacy would have taken the sqrt of a negative value.
+!     Note: the legacy *AL scaling factor is dropped — coords are in sigma here.
 !
 ! Segmental order:
 !   Accumulates plain cos(theta) (no AL^2 factor).
@@ -63,9 +74,16 @@ module polyfj_observables
     integer(i8), allocatable :: nc(:)        ! chain count per bin
     real(dp), allocatable :: rg2_sum(:)      ! sum of Rg^2 [sigma^2]
     real(dp), allocatable :: re2_sum(:)      ! sum of Re^2 [sigma^2]
-    real(dp), allocatable :: a_sum(:)        ! sum of largest  sqrt(gyration eval)
-    real(dp), allocatable :: b_sum(:)        ! sum of middle   sqrt(gyration eval)
-    real(dp), allocatable :: c_sum(:)        ! sum of smallest sqrt(gyration eval)
+    real(dp), allocatable :: a_sum(:)        ! sum of largest  sqrt(gyration eval)  [corrected]
+    real(dp), allocatable :: b_sum(:)        ! sum of middle   sqrt(gyration eval)  [corrected]
+    real(dp), allocatable :: c_sum(:)        ! sum of smallest sqrt(gyration eval)  [corrected]
+
+    ! Legacy inertia-tensor semi-axes (for legacy-faithful g2fj.out emission).
+    ! These mirror ACIG/BCIG/CCIG from polyfj.f lines 390-392.
+    ! Driver finalises as sqrt(acig_sum/nc), matching legacy's sqrt-of-mean convention.
+    real(dp), allocatable :: acig_sum(:)     ! sum of cigai (legacy inertia semi-axis, sigma)
+    real(dp), allocatable :: bcig_sum(:)     ! sum of cigbi
+    real(dp), allocatable :: ccig_sum(:)     ! sum of cigci
   end type polyfj_obs_t
 
 contains
@@ -110,24 +128,33 @@ contains
     obs%seg_cnt     = 0_i8
 
     ! CoM-resolved arrays
-    if (allocated(obs%nc))      deallocate(obs%nc)
-    if (allocated(obs%rg2_sum)) deallocate(obs%rg2_sum)
-    if (allocated(obs%re2_sum)) deallocate(obs%re2_sum)
-    if (allocated(obs%a_sum))   deallocate(obs%a_sum)
-    if (allocated(obs%b_sum))   deallocate(obs%b_sum)
-    if (allocated(obs%c_sum))   deallocate(obs%c_sum)
+    if (allocated(obs%nc))        deallocate(obs%nc)
+    if (allocated(obs%rg2_sum))   deallocate(obs%rg2_sum)
+    if (allocated(obs%re2_sum))   deallocate(obs%re2_sum)
+    if (allocated(obs%a_sum))     deallocate(obs%a_sum)
+    if (allocated(obs%b_sum))     deallocate(obs%b_sum)
+    if (allocated(obs%c_sum))     deallocate(obs%c_sum)
+    if (allocated(obs%acig_sum))  deallocate(obs%acig_sum)
+    if (allocated(obs%bcig_sum))  deallocate(obs%bcig_sum)
+    if (allocated(obs%ccig_sum))  deallocate(obs%ccig_sum)
     allocate(obs%nc(nbc))
     allocate(obs%rg2_sum(nbc))
     allocate(obs%re2_sum(nbc))
     allocate(obs%a_sum(nbc))
     allocate(obs%b_sum(nbc))
     allocate(obs%c_sum(nbc))
-    obs%nc      = 0_i8
-    obs%rg2_sum = 0.0_dp
-    obs%re2_sum = 0.0_dp
-    obs%a_sum   = 0.0_dp
-    obs%b_sum   = 0.0_dp
-    obs%c_sum   = 0.0_dp
+    allocate(obs%acig_sum(nbc))
+    allocate(obs%bcig_sum(nbc))
+    allocate(obs%ccig_sum(nbc))
+    obs%nc        = 0_i8
+    obs%rg2_sum   = 0.0_dp
+    obs%re2_sum   = 0.0_dp
+    obs%a_sum     = 0.0_dp
+    obs%b_sum     = 0.0_dp
+    obs%c_sum     = 0.0_dp
+    obs%acig_sum  = 0.0_dp
+    obs%bcig_sum  = 0.0_dp
+    obs%ccig_sum  = 0.0_dp
 
   end subroutine obs_init
 
@@ -159,7 +186,13 @@ contains
 
     ! Gyration tensor and eigendecomposition
     real(dp)  :: gyr(3,3), eval(3), evec(3,3)
-    real(dp)  :: ea, eb, ec            ! semi-axes a>=b>=c
+    real(dp)  :: ea, eb, ec            ! semi-axes a>=b>=c (corrected)
+
+    ! Legacy inertia tensor and eigendecomposition
+    real(dp)  :: ai(3,3)               ! inertia tensor (legacy AI)
+    real(dp)  :: ai_eval(3), ai_evec(3,3)
+    real(dp)  :: eig1, eig2, eig3      ! eigenvalues sorted ascending
+    real(dp)  :: cigai, cigbi, cigci   ! legacy semi-axes
     real(dp)  :: etmp
 
     integer   :: n, nmol
@@ -352,11 +385,53 @@ contains
       eb = sqrt(max(eval(2), 0.0_dp))   ! middle
       ec = sqrt(max(eval(1), 0.0_dp))   ! smallest
 
-      ! Accumulate (driver will compute mean = a_sum/nc at write time)
+      ! Accumulate corrected semi-axes (driver: mean = a_sum/nc)
       obs%nc(k)    = obs%nc(k) + 1_i8
       obs%a_sum(k) = obs%a_sum(k) + ea
       obs%b_sum(k) = obs%b_sum(k) + eb
       obs%c_sum(k) = obs%c_sum(k) + ec
+
+      ! --- Legacy inertia tensor (polyfj.f lines 333-374) ---
+      ! Build I_{ab} = sum_j (delta_ab * |rj|^2 - rja*rjb) with the
+      ! sign convention used by legacy (off-diagonal terms negated):
+      !   I(1,1) = sum(rjy^2 + rjz^2);  I(1,2) = -sum(rjx*rjy); etc.
+      ai = 0.0_dp
+      do j = 1, n
+        ij  = (i-1)*n + j
+        rjx = sys%x(ij) - xcm
+        rjy = sys%y(ij) - ycm
+        rjz = sys%z(ij) - zcm
+        ai(1,1) = ai(1,1) + rjy*rjy + rjz*rjz
+        ai(2,2) = ai(2,2) + rjx*rjx + rjz*rjz
+        ai(3,3) = ai(3,3) + rjx*rjx + rjy*rjy
+        ai(1,2) = ai(1,2) - rjx*rjy
+        ai(1,3) = ai(1,3) - rjx*rjz
+        ai(2,3) = ai(2,3) - rjy*rjz
+      end do
+      ai(2,1) = ai(1,2)
+      ai(3,1) = ai(1,3)
+      ai(3,2) = ai(2,3)
+
+      ! Diagonalise; jacobi3 returns eigenvalues sorted ascending
+      call jacobi3(ai, ai_eval, ai_evec)
+
+      ! ai_eval(1) <= ai_eval(2) <= ai_eval(3)
+      eig1 = ai_eval(1)
+      eig2 = ai_eval(2)
+      eig3 = ai_eval(3)
+
+      ! Legacy semi-axis formulae (polyfj.f lines 372-374).
+      ! max(..., 0) guards sqrt against negative values that arise for
+      ! rod-like chains (legacy did not guard and could produce NaN).
+      cigai = sqrt(max(2.5_dp*(eig2 + eig3 - eig1) / real(n, dp), 0.0_dp))
+      cigbi = sqrt(max(2.5_dp*(eig1 + eig3 - eig2) / real(n, dp), 0.0_dp))
+      cigci = sqrt(max(2.5_dp*(eig2 + eig1 - eig3) / real(n, dp), 0.0_dp))
+
+      ! Accumulate into the same CoM-distance bin k used above.
+      ! Driver finalises as sqrt(acig_sum/nc) to match legacy's sqrt-of-mean.
+      obs%acig_sum(k) = obs%acig_sum(k) + cigai
+      obs%bcig_sum(k) = obs%bcig_sum(k) + cigbi
+      obs%ccig_sum(k) = obs%ccig_sum(k) + cigci
 
     end do ! i (Rg/Re/shape pass)
 

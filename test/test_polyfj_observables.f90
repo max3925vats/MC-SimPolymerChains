@@ -11,6 +11,8 @@
 !   3. re2_known         — same chain; Re^2 = 4.0
 !   4. shape_known       — same chain; a≈sqrt(2/3), b≈0, c≈0
 !   5. segorder_rod      — chain along +x far from origin; <cos>≈1
+!   6. legacy_shape_rod  — same straight chain; inertia-tensor semi-axes:
+!                          cigai≈1.8257, cigbi≈0, cigci≈0
 
 module test_polyfj_observables_suite
   use testdrive,              only: new_unittest, unittest_type, error_type, check
@@ -27,12 +29,13 @@ contains
   !> Register all tests (gfortran-15-safe: allocate + assign, no array ctor)
   subroutine collect_polyfj_obs(testsuite)
     type(unittest_type), allocatable, intent(out) :: testsuite(:)
-    allocate(testsuite(5))
+    allocate(testsuite(6))
     testsuite(1) = new_unittest("density_counts",  test_density_counts)
     testsuite(2) = new_unittest("rg2_straight",    test_rg2_straight)
     testsuite(3) = new_unittest("re2_known",       test_re2_known)
     testsuite(4) = new_unittest("shape_known",     test_shape_known)
     testsuite(5) = new_unittest("segorder_rod",    test_segorder_rod)
+    testsuite(6) = new_unittest("legacy_shape_rod", test_legacy_shape_rod)
   end subroutine collect_polyfj_obs
 
   ! ------------------------------------------------------------------
@@ -363,6 +366,82 @@ contains
     if (allocated(error)) return
 
   end subroutine test_segorder_rod
+
+  ! ------------------------------------------------------------------
+  ! 6. legacy_shape_rod
+  !
+  ! Straight x-axis chain: beads at (3,0,0),(4,0,0),(5,0,0).
+  ! CoM = (4,0,0).  Deviations from CoM: (-1,0,0),(0,0,0),(+1,0,0).
+  !
+  ! Inertia tensor (legacy convention):
+  !   I(1,1) = sum(rjy^2+rjz^2) = 0;  I(2,2) = sum(rjx^2+rjz^2) = 2
+  !   I(3,3) = sum(rjx^2+rjy^2) = 2;  off-diag = 0.
+  !   → diag(0, 2, 2).
+  !
+  ! Eigenvalues (ascending via jacobi3): eig1=0, eig2=2, eig3=2.
+  !
+  ! Legacy semi-axes (n=3):
+  !   cigai = sqrt(2.5*(eig2+eig3-eig1)/3) = sqrt(2.5*4/3) = sqrt(10/3)
+  !         ≈ 1.82574186 (exact: sqrt(10/3))
+  !   cigbi = sqrt(2.5*(eig1+eig3-eig2)/3) = sqrt(2.5*0/3) = 0
+  !   cigci = sqrt(2.5*(eig1+eig2-eig3)/3) = sqrt(2.5*0/3) = 0
+  !
+  ! CoM distance = 4.0; bszc=0.5 → bin = 1+int(4/0.5) = 9.
+  ! Assert acig_sum(9)/nc(9) ≈ sqrt(10/3), bcig≈0, ccig≈0 within 1e-6.
+  ! ------------------------------------------------------------------
+  subroutine test_legacy_shape_rod(error)
+    type(error_type), allocatable, intent(out) :: error
+
+    type(system_t)      :: sys
+    type(polyfj_obs_t)  :: obs
+    integer, parameter  :: n = 3
+    real(dp), parameter :: bsz  = 0.5_dp
+    real(dp), parameter :: bszc = 0.5_dp
+    real(dp), parameter :: L    = 20.0_dp
+    real(dp), parameter :: rmax = L / 2.0_dp
+    real(dp), parameter :: tol  = 1.0e-6_dp
+
+    real(dp) :: xs(n), ys(n), zs(n)
+    real(dp) :: com_dist, acig_mean, bcig_mean, ccig_mean
+    real(dp) :: cigai_exact
+    integer  :: kbin
+
+    ! Chain at x=3,4,5 → CoM=(4,0,0); deviations (-1,0,0),(0,0,0),(+1,0,0)
+    xs(1) = 3.0_dp;  ys(1) = 0.0_dp;  zs(1) = 0.0_dp
+    xs(2) = 4.0_dp;  ys(2) = 0.0_dp;  zs(2) = 0.0_dp
+    xs(3) = 5.0_dp;  ys(3) = 0.0_dp;  zs(3) = 0.0_dp
+
+    call make_system(sys, n, xs, ys, zs, L)
+    call obs_init(obs, bsz, bszc, rmax)
+    call obs_sample(obs, sys)
+
+    com_dist = 4.0_dp
+    kbin = 1 + int(com_dist / bszc)   ! = 9
+
+    call check(error, kbin <= obs%nbinc, "legacy_shape_rod: kbin out of range")
+    if (allocated(error)) return
+
+    call check(error, obs%nc(kbin) == 1_i8, "legacy_shape_rod: nc(kbin) /= 1")
+    if (allocated(error)) return
+
+    acig_mean = obs%acig_sum(kbin) / real(obs%nc(kbin), dp)
+    bcig_mean = obs%bcig_sum(kbin) / real(obs%nc(kbin), dp)
+    ccig_mean = obs%ccig_sum(kbin) / real(obs%nc(kbin), dp)
+
+    ! cigai = sqrt(10/3) ≈ 1.82574186
+    cigai_exact = sqrt(10.0_dp / 3.0_dp)
+
+    call check(error, abs(acig_mean - cigai_exact) < tol, &
+               "legacy_shape_rod: acig /= sqrt(10/3)")
+    if (allocated(error)) return
+
+    call check(error, abs(bcig_mean) < tol, "legacy_shape_rod: bcig /= 0")
+    if (allocated(error)) return
+
+    call check(error, abs(ccig_mean) < tol, "legacy_shape_rod: ccig /= 0")
+    if (allocated(error)) return
+
+  end subroutine test_legacy_shape_rod
 
 end module test_polyfj_observables_suite
 
