@@ -28,7 +28,6 @@ module runt_moves
   use polymc_cell_list, only: cell_list_t
   use polymc_rng,       only: rng_t, rng_uniform, rng_unit_vector
   use polymc_overlap,   only: bead_overlaps, sphere_overlaps
-  use polymc_chain,     only: chain_reverse
   use polymc_config,    only: system_t, params_t
   use runt_potential,   only: u_pair, u_sphere
   use runt_energy,      only: bead_inter_energy
@@ -69,6 +68,24 @@ contains
     dz = min_image(pz, L)
     dist_to_origin = sqrt(dx*dx + dy*dy + dz*dz)
   end function dist_to_origin
+
+  ! ------------------------------------------------------------------
+  !> Reverse a local chain array in place (n beads, 1-based).
+  !
+  ! Used by REPT/CCB to apply the 50% chain reversal to a LOCAL working
+  ! copy instead of sys.  See module note on reversal semantics.
+  ! ------------------------------------------------------------------
+  pure subroutine reverse_local(x, y, z, n)
+    real(dp), intent(inout) :: x(:), y(:), z(:)
+    integer,  intent(in)    :: n
+    integer  :: j
+    real(dp) :: tx, ty, tz
+    do j = 1, n / 2
+      tx = x(j);  x(j) = x(n+1-j);  x(n+1-j) = tx
+      ty = y(j);  y(j) = y(n+1-j);  y(n+1-j) = ty
+      tz = z(j);  z(j) = z(n+1-j);  z(n+1-j) = tz
+    end do
+  end subroutine reverse_local
 
   ! ====================================================================
   !> move_dick — Dickman regrowth move.
@@ -236,8 +253,16 @@ contains
   !   5. Metropolis acceptance
   !   6. On accept: new chain = [new_head, old_1, old_2, ..., old_{N-1}]
   !
-  ! After accept, the chain_reverse may have changed the bead order in sys;
-  ! the caller rebuilds cl from the updated sys.
+  ! Reversal semantics (fix): the 50% chain reversal is applied to a LOCAL
+  ! working copy (xw/yw/zw), NEVER to sys%x/y/z.  The driver only rebuilds cl
+  ! after an accepted move, so mutating sys before acceptance would leave cl
+  ! stale and corrupt later overlap detection on a rejected reversal.  All of
+  ! the moving chain's own positions (head-growth base, surviving beads, the
+  ! removed tail, and the EOLD intra computation) come from the local copy.
+  ! Inter-molecular / sphere terms still read sys with exclude_mol=imol, which
+  ! is correct: the moving chain's own beads are excluded, so its stale-in-cl
+  ! old positions are never consulted.  sys is written only on acceptance, so a
+  ! rejected move leaves sys bitwise unchanged.
   ! ====================================================================
   subroutine move_rept(sys, p, cl, rng, imol, accepted, de)
     type(system_t),    intent(inout) :: sys
@@ -248,7 +273,8 @@ contains
     logical,           intent(out)   :: accepted
     real(dp),          intent(out)   :: de
 
-    integer  :: ibase, ii, i1, i2
+    integer  :: ibase, ii
+    real(dp) :: xw(sys%n), yw(sys%n), zw(sys%n)   ! local working copy
     real(dp) :: vx, vy, vz
     real(dp) :: tnx, tny, tnz   ! new head bead position
     real(dp) :: rdis, r
@@ -259,31 +285,33 @@ contains
     ibase    = (imol - 1) * sys%n
 
     ! ------------------------------------------------------------------
-    ! Step 1: randomly reverse chain (with prob 0.5)
-    ! NOTE: chain_reverse modifies sys%x/y/z permanently for this molecule.
-    ! This is faithful to legacy REPT which calls CVERT unconditionally on
-    ! the sys arrays.  The driver rebuilds cl after accept (which includes
-    ! the reversal).  On reject the reversal stays in sys; this is also
-    ! faithful to legacy (CVERT is not undone on reject).
+    ! Step 1: copy chain into local working array; with prob 0.5 reverse
+    ! the LOCAL copy (legacy CVERT, but never touching sys before accept).
     ! ------------------------------------------------------------------
+    do ii = 1, sys%n
+      xw(ii) = sys%x(ibase + ii)
+      yw(ii) = sys%y(ibase + ii)
+      zw(ii) = sys%z(ibase + ii)
+    end do
     if (rng_uniform(rng) > PROB_CHAIN_REVERSE) then
-      call chain_reverse(sys%x, sys%y, sys%z, ibase, sys%n)
+      call reverse_local(xw, yw, zw, sys%n)
     end if
 
     ! ------------------------------------------------------------------
-    ! Step 2: grow new head bead at pos(1) + unit_vector
+    ! Step 2: grow new head bead at xw(1) + unit_vector
     ! Legacy: XITR(1) = X(IMOL+1) + DELX/AL  where |DELX/AL| = 1/AL = 1 sigma
     ! Modern: directly add unit vector (length 1 sigma)
     ! ------------------------------------------------------------------
     call rng_unit_vector(rng, vx, vy, vz)
-    tnx = sys%x(ibase + 1) + vx
-    tny = sys%y(ibase + 1) + vy
-    tnz = sys%z(ibase + 1) + vz
+    tnx = xw(1) + vx
+    tny = yw(1) + vy
+    tnz = zw(1) + vz
 
     ! Sphere overlap check (hard reject)
     if (sphere_overlaps(sys%box, sys%rsp, tnx, tny, tnz)) return
 
     ! Inter-molecular bead overlap check (hard reject)
+    ! (sys still holds original positions; cl is valid; own chain excluded)
     if (bead_overlaps(sys%box, cl, sys%x, sys%y, sys%z, sys%nbeads, &
                       sys%mol_of, tnx, tny, tnz, imol)) return
 
@@ -292,36 +320,35 @@ contains
     enew = bead_inter_energy(sys, p, cl, imol, tnx, tny, tnz) &
          + u_sphere(r, p%bbeps, sys%rsp, p%rcut)
 
-    ! Intra overlap check: new head vs beads 2..N-1 (old beads that survive)
+    ! Intra overlap check: new head vs working beads 2..N-1 (surviving beads)
     ! and accumulate intra energy with beads 2..N-1
-    ! Legacy DO 320 II=2,N-1 uses IMOL+II (0-based offset gives beads 2..N-1)
+    ! Legacy DO 320 II=2,N-1
     do ii = 2, sys%n - 1
-      i1   = ibase + ii
-      rdis = mi_dist2(tnx, tny, tnz, sys%x(i1), sys%y(i1), sys%z(i1), &
-                      sys%box%L)
+      rdis = mi_dist2(tnx, tny, tnz, xw(ii), yw(ii), zw(ii), sys%box%L)
       if (rdis < 1.0_dp) return
       enew = enew + u_pair(sqrt(rdis), p%beps, p%rcut)
     end do
 
     ! ------------------------------------------------------------------
-    ! Step 4: compute EOLD for the removed tail bead (bead N)
-    ! Legacy REPT: intra pairs of bead N vs beads 1..N-2, inter, sphere
+    ! Step 4: compute EOLD for the removed tail bead (working bead N)
+    ! Legacy REPT: intra pairs of bead N vs beads 1..N-2, inter, sphere.
+    ! Yukawa inter/sphere energy is invariant under the reversal relabeling,
+    ! so reading sys for the inter term is equivalent; we use the working
+    ! copy for the tail position and intra pairs for consistency.
     ! ------------------------------------------------------------------
     eold = 0.0_dp
-    i2   = ibase + sys%n   ! global index of bead N (tail to be removed)
 
-    ! Intra: bead N vs beads 1..N-2
+    ! Intra: working bead N vs working beads 1..N-2
     do ii = 1, sys%n - 2
-      i1   = ibase + ii
-      rdis = mi_dist2(sys%x(i1), sys%y(i1), sys%z(i1), &
-                      sys%x(i2), sys%y(i2), sys%z(i2), sys%box%L)
+      rdis = mi_dist2(xw(ii), yw(ii), zw(ii), &
+                      xw(sys%n), yw(sys%n), zw(sys%n), sys%box%L)
       eold = eold + u_pair(sqrt(rdis), p%beps, p%rcut)
     end do
 
-    ! Inter + sphere for removed bead N
-    r    = dist_to_origin(sys%x(i2), sys%y(i2), sys%z(i2), sys%box%L)
+    ! Inter + sphere for removed working bead N
+    r    = dist_to_origin(xw(sys%n), yw(sys%n), zw(sys%n), sys%box%L)
     eold = eold + bead_inter_energy(sys, p, cl, imol, &
-                    sys%x(i2), sys%y(i2), sys%z(i2)) &
+                    xw(sys%n), yw(sys%n), zw(sys%n)) &
                 + u_sphere(r, p%bbeps, sys%rsp, p%rcut)
 
     ! ------------------------------------------------------------------
@@ -332,18 +359,16 @@ contains
     end if
 
     ! ------------------------------------------------------------------
-    ! Move accepted: new chain = [new_head, old_1, old_2, ..., old_{N-1}]
-    ! Legacy reset loop: XITR(J)=X(IMOL+J-1) for J=2..N, then writes XITR to X
+    ! Move accepted: new chain = [new_head, xw(1), xw(2), ..., xw(N-1)]
+    ! Written into sys only now (reject leaves sys bitwise unchanged).
     ! ------------------------------------------------------------------
     accepted = .true.
     de       = enew - eold
 
-    ! Shift old beads 1..N-1 into positions 2..N (copy backwards to be safe)
-    ! Then write new head into position 1.
     do ii = sys%n, 2, -1
-      sys%x(ibase + ii) = sys%x(ibase + ii - 1)
-      sys%y(ibase + ii) = sys%y(ibase + ii - 1)
-      sys%z(ibase + ii) = sys%z(ibase + ii - 1)
+      sys%x(ibase + ii) = xw(ii - 1)
+      sys%y(ibase + ii) = yw(ii - 1)
+      sys%z(ibase + ii) = zw(ii - 1)
     end do
     sys%x(ibase + 1) = tnx
     sys%y(ibase + 1) = tny
@@ -377,6 +402,17 @@ contains
   ! "Hard reject entire move" on sphere overlap: legacy CCB returns with ISUC=1
   ! (reject) if ANY of the NSAMP trials hits the sphere during the growth phase.
   ! This is reproduced here.
+  !
+  ! Reversal semantics (fix): the 50% chain reversal is applied to a LOCAL base
+  ! copy (xbase/ybase/zbase), NEVER to sys%x/y/z.  The cut point ICUT indexes
+  ! into this (possibly reversed) base chain — growing from either end is the
+  ! whole point of the reversal.  BOTH the NEW and OLD Rosenbluth phases and the
+  ! full EOLD/ENEW energy verification use the base copy for the moving chain's
+  ! own positions; inter/sphere terms read sys with exclude_mol=imol (correct:
+  ! own beads excluded, so stale-in-cl old positions are never consulted).
+  ! sys is written only on acceptance, so a rejected move leaves sys bitwise
+  ! unchanged.  (The Yukawa inter/sphere energy is invariant under the reversal
+  ! relabeling, but we read it consistently with the base copy positions.)
   ! ====================================================================
   subroutine move_ccb(sys, p, cl, rng, imol, accepted, de)
     type(system_t),    intent(inout) :: sys
@@ -387,8 +423,9 @@ contains
     logical,           intent(out)   :: accepted
     real(dp),          intent(out)   :: de
 
-    integer  :: ibase, j, k, ii, icut, i1, i2
+    integer  :: ibase, j, k, ii, icut
     real(dp) :: xn(sys%n), yn(sys%n), zn(sys%n)   ! working/trial chain
+    real(dp) :: xbase(sys%n), ybase(sys%n), zbase(sys%n) ! base chain (post-reversal)
     real(dp) :: stx(sys%n), sty(sys%n), stz(sys%n) ! stored new chain
     real(dp) :: xt(NSAMP), yt(NSAMP), zt(NSAMP)    ! trial positions
     real(dp) :: et(NSAMP)                           ! trial weights
@@ -405,20 +442,26 @@ contains
     wo = 1.0_dp
 
     ! ------------------------------------------------------------------
-    ! Step 1: randomly reverse chain (with prob 0.5)
+    ! Step 1: copy current chain into a LOCAL base array; with prob 0.5
+    ! reverse the LOCAL copy.  sys%x/y/z is never touched before accept,
+    ! so the cell list stays consistent on a rejected move.
     ! ------------------------------------------------------------------
+    do j = 1, sys%n
+      xbase(j) = sys%x(ibase + j)
+      ybase(j) = sys%y(ibase + j)
+      zbase(j) = sys%z(ibase + j)
+    end do
     if (rng_uniform(rng) > PROB_CHAIN_REVERSE) then
-      call chain_reverse(sys%x, sys%y, sys%z, ibase, sys%n)
+      call reverse_local(xbase, ybase, zbase, sys%n)
     end if
 
     ! ------------------------------------------------------------------
-    ! Step 2: copy current chain into working array XN
+    ! Step 2: initialise working array XN from the (possibly reversed) base
     ! ------------------------------------------------------------------
     do j = 1, sys%n
-      i1    = ibase + j
-      xn(j) = sys%x(i1)
-      yn(j) = sys%y(i1)
-      zn(j) = sys%z(i1)
+      xn(j) = xbase(j)
+      yn(j) = ybase(j)
+      zn(j) = zbase(j)
     end do
 
     ! ------------------------------------------------------------------
@@ -521,7 +564,9 @@ contains
     end do  ! j = icut..n  (NEW chain)
 
     ! ------------------------------------------------------------------
-    ! Step 5: store new chain; reload XN from original sys positions
+    ! Step 5: store new chain; reload XN from the (possibly reversed) base
+    ! chain for the OLD Rosenbluth phase.  Legacy reloads XN from X1, which
+    ! CVERT had already reversed in place; xbase holds that same state.
     ! ------------------------------------------------------------------
     do j = 1, sys%n
       stx(j) = xn(j)
@@ -530,10 +575,9 @@ contains
     end do
 
     do j = 1, sys%n
-      i1    = ibase + j
-      xn(j) = sys%x(i1)
-      yn(j) = sys%y(i1)
-      zn(j) = sys%z(i1)
+      xn(j) = xbase(j)
+      yn(j) = ybase(j)
+      zn(j) = zbase(j)
     end do
 
     ! ------------------------------------------------------------------
@@ -551,19 +595,17 @@ contains
         eno = 0.0_dp
 
         if (k == 1) then
-          ! Use existing bead position (already verified non-overlapping)
-          i1  = ibase + j
-          r   = dist_to_origin(sys%x(i1), sys%y(i1), sys%z(i1), sys%box%L)
-          eno = bead_inter_energy(sys, p, cl, imol, &
-                                  sys%x(i1), sys%y(i1), sys%z(i1)) &
+          ! Use the existing (base-chain) bead position J, already verified
+          ! non-overlapping.  xn currently holds the (possibly reversed) base.
+          r   = dist_to_origin(xn(j), yn(j), zn(j), sys%box%L)
+          eno = bead_inter_energy(sys, p, cl, imol, xn(j), yn(j), zn(j)) &
               + u_sphere(r, p%bbeps, sys%rsp, p%rcut)
 
-          ! Intra contribution for existing bead
+          ! Intra contribution for existing bead vs base beads 1..J-2
           if (j >= 3) then
             do ii = 1, j - 2
-              i2   = ibase + ii
-              rdis = mi_dist2(sys%x(i1), sys%y(i1), sys%z(i1), &
-                              sys%x(i2), sys%y(i2), sys%z(i2), sys%box%L)
+              rdis = mi_dist2(xn(j), yn(j), zn(j), &
+                              xn(ii), yn(ii), zn(ii), sys%box%L)
               ! Legacy: IF(RDIS.LT.DEFF) WRITE error (not a reject) — config is valid
               eno = eno + u_pair(sqrt(rdis), p%beps, p%rcut)
             end do
@@ -639,17 +681,16 @@ contains
     enew = 0.0_dp
 
     do j = 1, sys%n
-      i1 = ibase + j
 
       ! NEW chain: inter + sphere for bead J
       r    = dist_to_origin(stx(j), sty(j), stz(j), sys%box%L)
       enew = enew + bead_inter_energy(sys, p, cl, imol, stx(j), sty(j), stz(j)) &
                   + u_sphere(r, p%bbeps, sys%rsp, p%rcut)
 
-      ! OLD chain: inter + sphere for bead J
-      r    = dist_to_origin(sys%x(i1), sys%y(i1), sys%z(i1), sys%box%L)
+      ! OLD chain: inter + sphere for (possibly reversed) base bead J
+      r    = dist_to_origin(xbase(j), ybase(j), zbase(j), sys%box%L)
       eold = eold + bead_inter_energy(sys, p, cl, imol, &
-                      sys%x(i1), sys%y(i1), sys%z(i1)) &
+                      xbase(j), ybase(j), zbase(j)) &
                   + u_sphere(r, p%bbeps, sys%rsp, p%rcut)
 
       ! Intra pairs: J vs beads 1..J-2
@@ -660,10 +701,9 @@ contains
                           sys%box%L)
           enew = enew + u_pair(sqrt(rdis), p%beps, p%rcut)
 
-          ! Old chain intra
-          i2   = ibase + k
-          rdis = mi_dist2(sys%x(i1), sys%y(i1), sys%z(i1), &
-                          sys%x(i2), sys%y(i2), sys%z(i2), sys%box%L)
+          ! Old chain intra (base copy)
+          rdis = mi_dist2(xbase(j), ybase(j), zbase(j), &
+                          xbase(k), ybase(k), zbase(k), sys%box%L)
           eold = eold + u_pair(sqrt(rdis), p%beps, p%rcut)
         end do
       end if

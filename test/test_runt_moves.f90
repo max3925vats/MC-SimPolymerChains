@@ -233,9 +233,17 @@ contains
   end subroutine test_energy_bookkeeping
 
   ! ==================================================================
-  !> Test (b): no bead-bead hard overlaps after every accepted move.
+  !> Test (b): no bead-bead hard overlaps after every accepted move,
+  !> AND sys is bitwise unchanged after every rejected move.
   !
-  ! Run 500 moves; after each accept, check whole system for overlaps.
+  ! Run 5000 mixed moves (cycling imol; many rept+ccb so the 50% chain
+  ! reversal fires often).  After each ACCEPTED move, rebuild cl (as the
+  ! driver does) and assert the whole system has no hard overlap.
+  !
+  ! After each REJECTED move, assert sys%x/y/z are BITWISE identical to the
+  ! pre-move snapshot.  This directly guards the reversal-on-reject bug:
+  ! a rejected chain reversal must not mutate sys (which would also leave
+  ! the cell list stale and corrupt subsequent overlap detection).
   ! ==================================================================
   subroutine test_no_overlap_after_accept(error)
     type(error_type), allocatable, intent(out) :: error
@@ -248,13 +256,30 @@ contains
     logical  :: acc
     real(dp) :: de
     integer  :: step, imol, move_type
+    real(dp), allocatable :: x0(:), y0(:), z0(:)   ! pre-move snapshot
 
     call build_lattice_system(sys, p, cl)
     call rng_seed(rng, 137_i8)
 
-    do step = 1, 500
+    allocate(x0(sys%nbeads), y0(sys%nbeads), z0(sys%nbeads))
+
+    do step = 1, 5000
       imol      = mod(step - 1, sys%nmol) + 1
-      move_type = mod(step - 1, 3)
+      ! Weight the move mix toward rept+ccb so reversals fire often:
+      ! cycle dick, rept, ccb, rept, ccb (3 of 5 moves are reversal-capable).
+      select case (mod(step - 1, 5))
+      case (0)
+        move_type = 0
+      case (1, 3)
+        move_type = 1
+      case default
+        move_type = 2
+      end select
+
+      ! Snapshot sys before the move (to verify reject leaves it unchanged).
+      x0 = sys%x
+      y0 = sys%y
+      z0 = sys%z
 
       select case (move_type)
       case (0)
@@ -270,12 +295,24 @@ contains
         call check(error, .not. system_has_overlap(sys), &
                    "no_overlap: hard overlap found after accepted move")
         if (allocated(error)) then
+          deallocate(x0, y0, z0)
+          deallocate(sys%x, sys%y, sys%z, sys%mol_of)
+          return
+        end if
+      else
+        ! Rejected move: sys must be BITWISE unchanged (no premature reversal).
+        call check(error, all(sys%x == x0) .and. all(sys%y == y0) &
+                          .and. all(sys%z == z0), &
+                   "reject: sys positions mutated by a rejected move")
+        if (allocated(error)) then
+          deallocate(x0, y0, z0)
           deallocate(sys%x, sys%y, sys%z, sys%mol_of)
           return
         end if
       end if
     end do
 
+    deallocate(x0, y0, z0)
     deallocate(sys%x, sys%y, sys%z, sys%mol_of)
   end subroutine test_no_overlap_after_accept
 
