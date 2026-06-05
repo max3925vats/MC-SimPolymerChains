@@ -49,10 +49,8 @@ contains
     integer,           intent(in) :: imol
     real(dp),          intent(in) :: px, py, pz
 
-    integer  :: j, nidx
+    integer  :: j
     real(dp) :: dx, dy, dz, r
-    ! Stack array for cell-list candidate indices
-    integer :: idx(sys%nbeads)
 
     bead_inter_energy = 0.0_dp
 
@@ -70,18 +68,23 @@ contains
       end do
 
     else
-      ! CUTOFF mode: gather 27-cell stencil candidates, then filter
-      call cl_neighbours(cl, sys%box, px, py, pz, idx, nidx)
-      do j = 1, nidx
-        if (sys%mol_of(idx(j)) /= imol) then
-          dx = min_image(sys%x(idx(j)) - px, sys%box%L)
-          dy = min_image(sys%y(idx(j)) - py, sys%box%L)
-          dz = min_image(sys%z(idx(j)) - pz, sys%box%L)
-          r  = sqrt(dx*dx + dy*dy + dz*dz)
-          ! u_pair handles the distance cutoff: returns 0 if r > rcut
-          bead_inter_energy = bead_inter_energy + u_pair(r, p%beps, p%rcut)
-        end if
-      end do
+      ! CUTOFF mode: gather 27-cell stencil candidates, then filter.
+      ! Stack buffer idx and counters are confined here so exact-mode
+      ! calls never reserve them.
+      block
+        integer :: idx(sys%nbeads), nidx, j
+        call cl_neighbours(cl, sys%box, px, py, pz, idx, nidx)
+        do j = 1, nidx
+          if (sys%mol_of(idx(j)) /= imol) then
+            dx = min_image(sys%x(idx(j)) - px, sys%box%L)
+            dy = min_image(sys%y(idx(j)) - py, sys%box%L)
+            dz = min_image(sys%z(idx(j)) - pz, sys%box%L)
+            r  = sqrt(dx*dx + dy*dy + dz*dz)
+            ! u_pair handles the distance cutoff: returns 0 if r > rcut
+            bead_inter_energy = bead_inter_energy + u_pair(r, p%beps, p%rcut)
+          end if
+        end do
+      end block
 
     end if
 
@@ -127,6 +130,7 @@ contains
       dy  = min_image(sys%y(k), sys%box%L)
       dz  = min_image(sys%z(k), sys%box%L)
       r_k = sqrt(dx*dx + dy*dy + dz*dz)
+      ! sys%rsp (not p%rsp) is the intentional source of the sphere radius
       e_sphere = e_sphere + u_sphere(r_k, p%bbeps, sys%rsp, p%rcut)
     end do
 

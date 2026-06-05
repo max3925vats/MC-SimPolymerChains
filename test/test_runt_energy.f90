@@ -178,6 +178,18 @@ contains
     call cl_init(cl_big, sys%box, p_cutoff%rcut)
     call cl_build(cl_big, sys%box, sys%x, sys%y, sys%z, sys%nbeads)
 
+    ! Self-check: with mc=3 the 3x3x3 stencil covers the whole box, so
+    ! cl_neighbours must return ALL nbeads as candidates for any query point.
+    ! This guards against future cell-list changes silently narrowing the stencil.
+    block
+      integer :: idx_chk(sys%nbeads), nidx_chk
+      call cl_neighbours(cl_big, sys%box, &
+                         sys%x(1), sys%y(1), sys%z(1), idx_chk, nidx_chk)
+      call check(error, nidx_chk == sys%nbeads, &
+                 "cutoff huge rcut: cl_neighbours did not return all beads (mc=3 stencil broken)")
+      if (allocated(error)) return
+    end block
+
     test_beads = [3, 18, 35]
 
     do k = 1, 3
