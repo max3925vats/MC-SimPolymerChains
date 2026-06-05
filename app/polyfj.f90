@@ -260,18 +260,29 @@ program polyfj_driver
   !     (This is a number density of chain CoMs per unit volume.)
   ! ==================================================================
   open(newunit=iu_rg, file='rgfj.out', status='replace', action='write')
-  do k = 1, obs%nbinc
-    if (obs%nc(k) > 0_i8) then
-      rl = real(k-1, dp) * obs%bszc
-      ru = real(k,   dp) * obs%bszc
-      vol_shell = (4.0_dp / 3.0_dp) * pi * (ru**3 - rl**3) * real(naver, dp)
-      rho_com   = real(obs%nc(k), dp) / vol_shell
-      rg2_mean  = obs%rg2_sum(k) / real(obs%nc(k), dp)
-      re2_mean  = obs%re2_sum(k) / real(obs%nc(k), dp)
-      dist_k    = (real(k, dp) - 0.5_dp) * obs%bszc
-      write(iu_rg, '(I10,1X,F12.5,3(3X,E14.6))') k, dist_k, rho_com, rg2_mean, re2_mean
-    end if
-  end do
+  ! Guard the naver>0 invariant explicitly: with no accumulated snapshots
+  ! the shell volume (scaled by naver) is zero and rho_com is undefined.
+  ! nc(k)>0 already implies naver>0, but make the dependency explicit so a
+  ! future change to the accumulation logic cannot silently divide by zero.
+  if (naver > 0) then
+    do k = 1, obs%nbinc
+      if (obs%nc(k) > 0_i8) then
+        rl = real(k-1, dp) * obs%bszc
+        ru = real(k,   dp) * obs%bszc
+        vol_shell = (4.0_dp / 3.0_dp) * pi * (ru**3 - rl**3) * real(naver, dp)
+        ! Standard volumetric number density of chain centres-of-mass:
+        ! nc / shell_volume / naver. This intentionally differs in absolute
+        ! normalization from the legacy ANC column (legacy used a non-standard
+        ! CONST/NMOL1 normalization), so col 2 of rgfj.out will not numerically
+        ! match the legacy output, by design.
+        rho_com   = real(obs%nc(k), dp) / vol_shell
+        rg2_mean  = obs%rg2_sum(k) / real(obs%nc(k), dp)
+        re2_mean  = obs%re2_sum(k) / real(obs%nc(k), dp)
+        dist_k    = (real(k, dp) - 0.5_dp) * obs%bszc
+        write(iu_rg, '(I10,1X,F12.5,3(3X,E14.6))') k, dist_k, rho_com, rg2_mean, re2_mean
+      end if
+    end do
+  end if
   close(iu_rg)
 
   ! ==================================================================
