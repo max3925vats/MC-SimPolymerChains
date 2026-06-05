@@ -57,16 +57,17 @@ The deck's `runt.inp` already has good move-type fractions; only `ncon` and
 - Line 2 = `nskip` (moves per accumulation)
 - Line 11 = `rcut` (optional cutoff; blank/absent = exact mode)
 
-Set `ncon=200000000` and `nskip=1000`, keep line 11 **blank** (exact mode):
+Set `ncon=200000000` and `nskip=1000`.  Exact mode requires the deck to have
+**no 11th line** (rcut absent).  The committed decks have exactly 10 lines, so
+they already satisfy this — no edit is needed for exact mode beyond lines 1-2:
 
 ```bash
-# In-place edit with sed (line 1 and 2 only, leave all other lines)
+# In-place edit with sed (lines 1 and 2 only, leave all other lines untouched).
+# Exact mode = no rcut line; the 10-line deck already has none, so we do not
+# add or blank an 11th line here.
 for DIR in /tmp/val_legacy /tmp/val_modern_exact; do
     sed -i '' '1s/.*/200000000/' "$DIR/runt.inp"
     sed -i '' '2s/.*/1000/'      "$DIR/runt.inp"
-    # Ensure line 11 is blank (exact mode, no cutoff)
-    # macOS sed: replace the 11th line with empty
-    sed -i '' '11s/.*//' "$DIR/runt.inp"
 done
 ```
 
@@ -134,19 +135,24 @@ If this run prints `FAIL`, check the worst-bin output: a few marginal bins at
 ## 5. Cutoff-vs-exact study
 
 Quantify the error introduced by the pairwise cutoff approximation.
-Create a third directory with the same deck but with an explicit `rcut=5.0` on
-line 11 of `runt.inp`:
+Create a third directory with the same deck but with an explicit `rcut=5.0`
+**appended** as line 11 of `runt.inp`.
+
+The committed deck has exactly 10 lines (no 11th line), so a `sed` substitute on
+line 11 would be a silent no-op and the run would fall back to exact mode — the
+cutoff study must **append** the line, not substitute it.
 
 ```bash
 mkdir -p /tmp/val_modern_cut
 cp "$DECK/runt.ic" /tmp/val_modern_cut/
-cp "$DECK/runt.inp" /tmp/val_modern_cut/
+cp "$DECK/runt.inp" /tmp/val_modern_cut/   # 10-line deck copied as-is
 
-# Set ncon, nskip, and rcut
+# Set ncon and nskip (lines 1-2 exist in the deck), then APPEND rcut as line 11
 sed -i '' '1s/.*/200000000/' /tmp/val_modern_cut/runt.inp
 sed -i '' '2s/.*/1000/'      /tmp/val_modern_cut/runt.inp
-sed -i '' '11s/.*/5.0/'      /tmp/val_modern_cut/runt.inp
+echo "5.0" >> /tmp/val_modern_cut/runt.inp   # append → file is now exactly 11 lines
 
+# Verify: line 11 must read 5.0 and the file must have exactly 11 lines
 echo "=== cutoff inp ===" && cat -n /tmp/val_modern_cut/runt.inp
 ```
 

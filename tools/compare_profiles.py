@@ -88,9 +88,6 @@ def align_profiles(
         return distA.copy(), densA.copy(), densB.copy()
 
     # Intersect on dist values rounded to grid precision
-    def round_key(d: np.ndarray) -> set:
-        return set(np.round(d / atol).astype(int))
-
     keysA = np.round(distA / atol).astype(int)
     keysB = np.round(distB / atol).astype(int)
     common = np.array(sorted(set(keysA) & set(keysB)))
@@ -188,8 +185,6 @@ def compare(
 
         metric = diff / np.where(combined_sig > 0, combined_sig, np.inf)
         threshold = tol_sigmas
-        unit_label = "sigma"
-        _ = countA, countB  # referenced to suppress unused warning
 
     else:
         # Relative difference ---------------------------------------------
@@ -197,8 +192,8 @@ def compare(
         rel_diff  = diff / np.where(mean_dens > 0, mean_dens, np.inf)
         metric    = rel_diff
         combined_sig = None   # not used in rtol mode
+        countA = countB = None
         threshold = rtol
-        unit_label = "rel"
 
     # --- Flagging ---
     flagged   = metric > threshold
@@ -234,7 +229,9 @@ def compare(
     print(f"    |diff| = {worst_diff:.6e}")
     if naver is not None:
         worst_sig = float(np.sqrt(sigA[worst]**2 + sigB[worst]**2))
+        worst_count = 0.5 * (float(countA[worst]) + float(countB[worst]))
         print(f"    sigma  = {worst_sig:.6e}  =>  {worst_metric:.2f} sigma")
+        print(f"    ~count = {worst_count:.1f}  (approx mean bin count)")
     else:
         print(f"    rel    = {worst_metric:.4f}")
 
@@ -331,6 +328,25 @@ def run_selftest() -> None:
             f"SELF-TEST 2 FAILED: expected exit 1 (FAIL), got {result_fail.returncode}"
         )
         print(f"[selftest] exit code = {result_fail.returncode}  ✓ FAIL as expected\n")
+
+        # --- rtol path (no --naver) ---
+        print("=" * 60)
+        print("SELF-TEST 3: identical profiles, rtol mode (no --naver)  →  expect PASS")
+        print("=" * 60)
+        result_rtol = subprocess.run(
+            [
+                sys.executable, script,
+                fa, fb_pass,
+                "--rtol", "0.05",
+                "--rmin", "1.5",
+            ],
+            capture_output=False,
+        )
+        print()
+        assert result_rtol.returncode == 0, (
+            f"SELF-TEST 3 FAILED: expected exit 0 (PASS), got {result_rtol.returncode}"
+        )
+        print(f"[selftest] exit code = {result_rtol.returncode}  ✓ PASS as expected\n")
 
     print("=" * 60)
     print("All self-tests passed.")
