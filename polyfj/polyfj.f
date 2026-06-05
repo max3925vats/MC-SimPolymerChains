@@ -2,7 +2,7 @@
 !     NEAR A LARGER HARD SPHERE
       PROGRAM POLYHC   
       IMPLICIT REAL*8(A-H,O-Z)
-      REAL*4 RAN
+      REAL*4 RANF
       INTEGER HEAD
       PARAMETER (PI=3.141592653589793D0)
       PARAMETER (NBMAX=10000,NMAX=100,MAXBIN=500)
@@ -185,9 +185,9 @@
 
 !     MAKE A MOVE
       
-         I = INT( NMOL1*RAN(NSEED) ) + 1
+         I = INT( NMOL1*RANF(NSEED) ) + 1
          IMOL = (I-1)*N
-         XRAN = RAN(NSEED)
+         XRAN = RANF(NSEED)
 !      write(*,*)'xran',xran
 !     PICK DICKMAN REPTATION OR CCB
          IF(XRAN.LT.FREPT)THEN 
@@ -525,11 +525,11 @@
 
       SUBROUTINE RUV(A,B,C)
       IMPLICIT REAL*8(A-H,O-Z)
-      REAL*4 RAN
+      REAL*4 RANF
       COMMON /SEED/ NSEED
 
-1     B1 = 1.0D0 - 2.0D0*RAN(NSEED)
-      B2 = 1.0D0 - 2.0D0*RAN(NSEED)
+1     B1 = 1.0D0 - 2.0D0*RANF(NSEED)
+      B2 = 1.0D0 - 2.0D0*RANF(NSEED)
       BSQ = B1*B1 + B2*B2
       IF(BSQ.GT.1.0D0) THEN
 !      REJECT

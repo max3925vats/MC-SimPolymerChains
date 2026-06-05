@@ -2,7 +2,7 @@
 
       SUBROUTINE DICK(I,ISUC)
       IMPLICIT REAL*8(A-H,O-Z)
-      REAL*4 RAN
+      REAL*4 RANF
       INTEGER HEAD
       PARAMETER (PI=3.141592653589793D0)
       PARAMETER (NBMAX=10000,NMAX=100)
@@ -19,9 +19,9 @@
       COMMON /OLAP/ HEAD,MAP,IDI,LIST,MC
       
 	  ISUC = 1
-      ZS1 = RAN(NSEED) - .5
-      ZS2 = RAN(NSEED) - .5
-      ZS3 = RAN(NSEED) - .5
+      ZS1 = RANF(NSEED) - .5
+      ZS2 = RANF(NSEED) - .5
+      ZS3 = RANF(NSEED) - .5
       IMOL = (I-1)*N
       IBD = IMOL + 1
 !     DISPLACE FIRST SEGMENT
@@ -43,7 +43,7 @@
          D1 = X1(IBD)-X1(IBD-1)
          D2 = Y1(IBD)-Y1(IBD-1)
          D3 = Z1(IBD)-Z1(IBD-1)
-         IF(RAN(NSEED).GT.0.25)GOTO 211
+         IF(RANF(NSEED).GT.0.25)GOTO 211
          CALL RUV(ZS1,ZS2,ZS3)
          D1 = D1 + DINT*ZS1
          D2 = D2 + DINT*ZS2
@@ -88,7 +88,7 @@
       SUBROUTINE REPT(I,ISUC)
 !     PERFORMS A REPTATION MOVE ON LINEAR CHAIN I
       IMPLICIT REAL*8(A-H,O-Z)
-      REAL*4 RAN
+      REAL*4 RANF
       INTEGER HEAD
       PARAMETER (PI=3.141592653589793D0)
       PARAMETER (NBMAX=10000,NMAX=100)
@@ -105,7 +105,7 @@
       COMMON /OLAP/ HEAD,MAP,IDI,LIST,MC
 !
       ISUC = 1
-      IF(RAN(NSEED).GT.0.5)CALL CVERT(I)
+      IF(RANF(NSEED).GT.0.5)CALL CVERT(I)
       IMOL = (I-1)*N
 !
 !     CUT OFF END AND ATTACH TO BEAD 1
@@ -151,7 +151,7 @@
 !     PERFORMS A CCB MOVE ON CHAIN I
 !
       IMPLICIT REAL*8(A-H,O-Z)
-      REAL*4 RAN
+      REAL*4 RANF
       INTEGER HEAD
       PARAMETER (PI=3.141592653589793D0)
       PARAMETER ( NSAMP=15 )
@@ -174,7 +174,7 @@
       ISUC = 1
       WN = 1.0D0
       WO = 1.0D0
-      IF(RAN(NSEED).GT.0.5)CALL CVERT(I)
+      IF(RANF(NSEED).GT.0.5)CALL CVERT(I)
       IMOL = (I-1)*N
       DO J = 1, N
          I1 = IMOL + J
@@ -182,7 +182,7 @@
          YN(J) = Y1(I1)
          ZN(J) = Z1(I1)
       ENDDO
-      ICUT = INT((N-1)*RAN(NSEED)) + 2
+      ICUT = INT((N-1)*RANF(NSEED)) + 2
 !      write(*,*)ICUT
       DO 50 J = ICUT, N
          SUM = 0.0D0
@@ -234,7 +234,7 @@
          DO 25 K = 1, NSAMP
             ET(K) = ET(K)*SUM
 25       CONTINUE
-         XRAN = RAN(NSEED)
+         XRAN = RANF(NSEED)
          S = 0.0D0
          DO 30 K = 1, NSAMP
             S = S + ET(K)
@@ -310,7 +310,7 @@
          WO = WO*ET(1)
 100   CONTINUE
       BOLTZ = WO/WN
-      IF(BOLTZ.GT.RAN(NSEED))THEN
+      IF(BOLTZ.GT.RANF(NSEED))THEN
          DO J = 1, N
             XITR(J) = STX(J)
             YITR(J) = STY(J)
@@ -354,7 +354,7 @@
 
       SUBROUTINE CVERT(I)
       IMPLICIT REAL*8(A-H,O-Z)
-      REAL*4 RAN
+      REAL*4 RANF
       INTEGER HEAD
       PARAMETER (PI=3.141592653589793D0)
       PARAMETER (NBMAX=10000,NMAX=100)
@@ -469,5 +469,20 @@
       ENDDO
 !
       NVL = 0
+      RETURN
+      END
+!
+      REAL*4 FUNCTION RANF(ISEED)
+!     PORTABLE UNIFORM (0,1) GENERATOR -- PARK-MILLER "MINIMAL STANDARD"
+!     LCG WITH SCHRAGE'S METHOD, UPDATING ISEED IN PLACE. REPLACES THE
+!     LEGACY RAN(NSEED) INTRINSIC, WHICH UNDER gfortran RETURNS A CONSTANT
+!     AND NEVER ADVANCES THE SEED (BREAKING ALL MOVE SELECTION/SAMPLING).
+      INTEGER ISEED, IA, IM, IQ, IR, K
+      PARAMETER (IA=16807, IM=2147483647, IQ=127773, IR=2836)
+      IF (ISEED.LE.0) ISEED = 2937
+      K = ISEED/IQ
+      ISEED = IA*(ISEED - K*IQ) - IR*K
+      IF (ISEED.LT.0) ISEED = ISEED + IM
+      RANF = REAL(ISEED) * (1.0/REAL(IM))
       RETURN
       END

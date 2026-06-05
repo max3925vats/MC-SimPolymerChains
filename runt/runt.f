@@ -4,7 +4,7 @@
 !---------------------------------------------------------!
       PROGRAM BBEADMC
       IMPLICIT REAL*8(A-H,O-Z)
-      REAL*4 RAN
+      REAL*4 RANF
       INTEGER HEAD
       PARAMETER (PI=3.141592653589793D0)
       PARAMETER (NBMAX=10000,NMAX=40,MCMAX=25,MAXBIN=400)
@@ -117,12 +117,12 @@
          IF (ICON.EQ.NCON)WRITE(6,*)'Ending simulation'
 !      MAKE A MOVE
 
-         I = INT( NMOL*RAN(NSEED) ) + 1
+         I = INT( NMOL*RANF(NSEED) ) + 1
          IMOL = (I-1)*N
 
 !      PICK DICKMAN, REPTATION OR CCB
 
-         XRAN = RAN(NSEED)
+         XRAN = RANF(NSEED)
          IF(XRAN.LT.FDICK)THEN
             NTD = NTD + 1
             CALL DICK(I,ISUC)
@@ -217,7 +217,7 @@
       WRITE(5,*)'Move statistics'
       WRITE (5,117) NTD, NTR, NTJ, NSD, NSR, NSJ,
      C              FSD, FSR, FSJ
-      WRITE (5,118) ALH,AL
+      WRITE (5,118) AL,AL
       WRITE (5,*)'DENSITY PROFILES NEAR THE BIG BEAD'
       CONST = 4.0D0*PI/3.0D0
       DO I=1, NBIN
@@ -256,11 +256,11 @@
 !
       SUBROUTINE RUV(X,Y,Z)
       IMPLICIT REAL*8(A-H,O-Z)
-      REAL*4 RAN
+      REAL*4 RANF
       COMMON /SEED/ NSEED
 
-1     B1 = 1.0D0 - 2.0D0*RAN(NSEED)
-      B2 = 1.0D0 - 2.0D0*RAN(NSEED)
+1     B1 = 1.0D0 - 2.0D0*RANF(NSEED)
+      B2 = 1.0D0 - 2.0D0*RANF(NSEED)
       BSQ = B1*B1 + B2*B2
       IF(BSQ.GT.1.0D0) THEN
 !      REJECT
