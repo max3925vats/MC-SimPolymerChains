@@ -14,6 +14,7 @@ figures/
 runt/runt_bin
 polyfj/polyfj_bin
 *.o
+*.mod
 
 # fpm / make build output
 build/
