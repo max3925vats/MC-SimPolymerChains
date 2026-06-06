@@ -28,6 +28,33 @@ Two physical regimes are supported:
 The physics of interest is the competition between packing and configurational
 entropy near the interface, and how attractions shift the interfacial density.
 
+## Selected results
+
+The two figures below are from the original 2016 study (the normalized radial
+density profile ρ(r)/ρ₀ vs distance r/σ from the sphere centre), and capture its
+main conclusions.
+
+**Effect of attractions** — the central result.
+
+![Effect of attractions on the interfacial density](docs/img/report_fig4_attraction.png)
+
+8-mers at packing fraction η = 0.2; left panel sphere radius σₛ = 1.5σ, right
+panel 2σ. The legend is (ε_ff – ε_sf), chain–chain and sphere–chain attraction
+strengths. Sphere–chain attraction alone (0.0–0.5, red) **raises** the density at
+the interface; chain–chain attraction alone (0.5–0.0, blue) pulls chains toward
+each other and **lowers** it; with both on (0.5–0.5, magenta) the chain–chain
+effect dominates and the net interfacial density still drops relative to the
+no-attraction case (0.0–0.0, black).
+
+**Effect of packing fraction** — packing entropy dominates.
+
+![Effect of packing fraction on the interfacial density](docs/img/report_fig3_packing.png)
+
+8-mers, sphere radius σₛ = 1.5σ, athermal. As the bulk packing fraction rises
+(η = 0.1 → 0.2 → 0.4) the density just outside the sphere increases sharply,
+showing that packing-entropy effects dominate over the configurational cost of
+crowding chains near the interface.
+
 ## The two programs
 
 | | Physics | Outputs |
